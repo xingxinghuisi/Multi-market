@@ -17,8 +17,9 @@ from database import (
     SessionLocal,
 )
 from models import (
-    AlertRule,
     Asset,
+    AlertRule,
+    MarketQuote,
 )
 from notification_service import (
     send_alert_notification,
@@ -63,6 +64,100 @@ def format_rule(
     )
 
 
+def save_market_quote(
+    db,
+    asset_id: int,
+    snapshot,
+):
+
+    quote = db.scalar(
+        select(
+            MarketQuote
+        ).where(
+            MarketQuote.asset_id
+            == asset_id
+        )
+    )
+
+    if quote is None:
+
+        quote = MarketQuote(
+            asset_id=asset_id,
+            price=snapshot.price,
+            reference_price=snapshot.reference_price,
+            change_amount=snapshot.change_amount,
+            change_pct=snapshot.change_pct,
+            open=snapshot.open,
+            high=snapshot.high,
+            low=snapshot.low,
+            volume=snapshot.volume,
+            quote_volume=snapshot.quote_volume,
+            event_time=snapshot.event_time,
+            session_date=snapshot.session_date,
+            reference_type=snapshot.reference_type,
+            reference_timezone=snapshot.reference_timezone,
+        )
+
+        db.add(
+            quote
+        )
+
+    else:
+
+        quote.price = (
+            snapshot.price
+        )
+
+        quote.reference_price = (
+            snapshot.reference_price
+        )
+
+        quote.change_amount = (
+            snapshot.change_amount
+        )
+
+        quote.change_pct = (
+            snapshot.change_pct
+        )
+
+        quote.open = (
+            snapshot.open
+        )
+
+        quote.high = (
+            snapshot.high
+        )
+
+        quote.low = (
+            snapshot.low
+        )
+
+        quote.volume = (
+            snapshot.volume
+        )
+
+        quote.quote_volume = (
+            snapshot.quote_volume
+        )
+
+        quote.event_time = (
+            snapshot.event_time
+        )
+
+        quote.session_date = (
+            snapshot.session_date
+        )
+
+        quote.reference_type = (
+            snapshot.reference_type
+        )
+
+        quote.reference_timezone = (
+            snapshot.reference_timezone
+        )
+
+    db.commit()
+
 # =========================================================
 # Snapshot
 # ↓
@@ -96,6 +191,16 @@ def process_snapshot(
         if not asset.enabled:
 
             return []
+
+        # =================================================
+        # 保存最新市场行情
+        # =================================================
+
+        save_market_quote(
+            db=db,
+            asset_id=asset.id,
+            snapshot=snapshot,
+        )
 
         symbol = (
             asset.symbol

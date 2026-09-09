@@ -16,6 +16,7 @@ from models import (
     AlertState,
     Asset,
     User,
+    MarketQuote,
 )
 from schemas import (
     AlertRuleCreate,
@@ -79,6 +80,40 @@ def get_default_user(
 
     return user
 
+def serialize_market_quote(
+    quote: MarketQuote,
+    asset: Asset,
+):
+
+    return {
+        "asset_id": asset.id,
+        "symbol": asset.symbol,
+        "name": asset.name,
+        "asset_type": asset.asset_type,
+        "venue": asset.venue,
+        "segment": asset.segment,
+        "currency": asset.currency,
+        "provider": asset.provider,
+
+        "price": quote.price,
+        "reference_price": quote.reference_price,
+        "change_amount": quote.change_amount,
+        "change_pct": quote.change_pct,
+
+        "open": quote.open,
+        "high": quote.high,
+        "low": quote.low,
+        "volume": quote.volume,
+        "quote_volume": quote.quote_volume,
+
+        "event_time": quote.event_time,
+        "session_date": quote.session_date,
+
+        "reference_type": quote.reference_type,
+        "reference_timezone": quote.reference_timezone,
+
+        "updated_at": quote.updated_at,
+    }
 
 def serialize_asset(
     asset: Asset,
@@ -314,6 +349,109 @@ def get_asset(
     return serialize_asset(
         asset
     )
+
+@app.get(
+    "/api/market/latest"
+)
+def get_latest_market_quotes(
+    venue: str | None = None,
+    asset_type: str | None = None,
+    symbol: str | None = None,
+    db: Session = Depends(get_db),
+):
+
+    statement = (
+        select(
+            MarketQuote,
+            Asset,
+        )
+        .join(
+            Asset,
+            MarketQuote.asset_id
+            == Asset.id,
+        )
+        .where(
+            Asset.enabled == True
+        )
+    )
+
+    if venue:
+
+        statement = statement.where(
+            Asset.venue
+            == venue.strip().upper()
+        )
+
+    if asset_type:
+
+        statement = statement.where(
+            Asset.asset_type
+            == asset_type.strip().lower()
+        )
+
+    if symbol:
+
+        statement = statement.where(
+            Asset.symbol
+            == symbol.strip().upper()
+        )
+
+    statement = statement.order_by(
+        Asset.id
+    )
+
+    rows = db.execute(
+        statement
+    ).all()
+
+    return [
+        serialize_market_quote(
+            quote,
+            asset,
+        )
+        for quote, asset in rows
+    ]
+
+@app.get(
+    "/api/market/latest/assets/{asset_id}"
+)
+def get_latest_market_quote_by_asset(
+    asset_id: int,
+    db: Session = Depends(get_db),
+):
+
+    row = db.execute(
+        select(
+            MarketQuote,
+            Asset,
+        )
+        .join(
+            Asset,
+            MarketQuote.asset_id
+            == Asset.id,
+        )
+        .where(
+            Asset.id == asset_id
+        )
+    ).first()
+
+    if row is None:
+
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Latest market quote "
+                "not found"
+            ),
+        )
+
+    quote, asset = row
+
+    return serialize_market_quote(
+        quote,
+        asset,
+    )
+
 
 @app.post(
     "/api/assets",

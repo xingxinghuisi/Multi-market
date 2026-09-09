@@ -266,6 +266,123 @@ class AlertState(Base):
         )
     )
 
+# =========================================================
+# 最新市场行情
+#
+# 每个 Asset 只保留一条最新行情
+# =========================================================
+
+class MarketQuote(Base):
+
+    __tablename__ = "market_quotes"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "asset_id",
+            name="uq_market_quote_asset",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+    )
+
+    asset_id: Mapped[int] = mapped_column(
+        ForeignKey("assets.id"),
+        nullable=False,
+        index=True,
+    )
+
+    # 当前价格
+    price: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+    )
+
+    # 涨跌基准价
+    #
+    # KRX:
+    # 前一交易日收盘
+    #
+    # Crypto:
+    # UTC+8 当日 00:00 开盘价
+    reference_price: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+    )
+
+    # 当前涨跌额
+    change_amount: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+    )
+
+    # 当前涨跌幅 %
+    change_pct: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+    )
+
+    open: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+    )
+
+    high: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+    )
+
+    low: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+    )
+
+    volume: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+    )
+
+    quote_volume: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+    )
+
+    # Provider 行情发生时间
+    event_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+
+    # 例如：
+    # 2026-09-10
+    session_date: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+    )
+
+    # previous_close
+    # utc8_day_open
+    reference_type: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+    )
+
+    # Asia/Seoul
+    # UTC+08:00
+    reference_timezone: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+    )
+
+    # 我们数据库最后一次更新时间
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
 
 # =========================================================
 # 每日股票行情
