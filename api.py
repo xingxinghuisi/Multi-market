@@ -7,11 +7,13 @@ from fastapi import (
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from datetime import date
 
 
 
 from database import SessionLocal
 from models import (
+    DailyPrice,
     AlertRule,
     AlertState,
     Asset,
@@ -79,6 +81,19 @@ def get_default_user(
         )
 
     return user
+def serialize_daily_price(
+    daily_price: DailyPrice,
+):
+
+    return {
+        "date": daily_price.date,
+        "open": daily_price.open,
+        "high": daily_price.high,
+        "low": daily_price.low,
+        "close": daily_price.close,
+        "volume": daily_price.volume,
+        "change_pct": daily_price.change_pct,
+    }
 
 def serialize_market_quote(
     quote: MarketQuote,
@@ -452,6 +467,97 @@ def get_latest_market_quote_by_asset(
         asset,
     )
 
+@app.get(
+    "/api/market/history/assets/{asset_id}"
+)
+def get_market_history(
+    asset_id: int,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+):
+
+    asset = db.get(
+        Asset,
+        asset_id,
+    )
+
+    if asset is None:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Asset not found",
+        )
+
+    if limit < 1 or limit > 1000:
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "limit must be "
+                "between 1 and 1000"
+            ),
+        )
+
+    statement = (
+        select(
+            DailyPrice
+        )
+        .where(
+            DailyPrice.asset_id
+            == asset_id
+        )
+    )
+
+    if start_date is not None:
+
+        statement = statement.where(
+            DailyPrice.date
+            >= start_date
+        )
+
+    if end_date is not None:
+
+        statement = statement.where(
+            DailyPrice.date
+            <= end_date
+        )
+
+    statement = (
+        statement
+        .order_by(
+            DailyPrice.date.desc()
+        )
+        .limit(
+            limit
+        )
+    )
+
+    rows = db.scalars(
+        statement
+    ).all()
+
+    return {
+        "asset": {
+            "id": asset.id,
+            "symbol": asset.symbol,
+            "name": asset.name,
+            "venue": asset.venue,
+            "currency": asset.currency,
+        },
+
+        "count": len(
+            rows
+        ),
+
+        "data": [
+            serialize_daily_price(
+                row
+            )
+            for row in rows
+        ],
+    }
 
 @app.post(
     "/api/assets",

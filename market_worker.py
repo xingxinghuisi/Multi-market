@@ -3,6 +3,7 @@ import asyncio
 from providers.registry import provider_registry
 
 from datetime import (
+    date,
     datetime,
     timedelta,
     timezone,
@@ -20,6 +21,7 @@ from models import (
     Asset,
     AlertRule,
     MarketQuote,
+    DailyPrice,
 )
 from notification_service import (
     send_alert_notification,
@@ -158,6 +160,74 @@ def save_market_quote(
 
     db.commit()
 
+
+def save_daily_price(
+    db,
+    asset_id: int,
+    snapshot,
+):
+
+    if not snapshot.session_date:
+
+        return
+
+    if isinstance(
+        snapshot.session_date,
+        date,
+    ):
+
+        session_date = (
+            snapshot.session_date
+        )
+
+    else:
+
+        session_date = (
+            datetime.strptime(
+                snapshot.session_date,
+                "%Y-%m-%d",
+            ).date()
+        )
+
+    daily_price = db.scalar(
+        select(
+            DailyPrice
+        ).where(
+            DailyPrice.asset_id
+            == asset_id,
+
+            DailyPrice.date
+            == session_date,
+        )
+    )
+
+    if daily_price is None:
+
+        daily_price = DailyPrice(
+            asset_id=asset_id,
+            date=session_date,
+            open=snapshot.open,
+            high=snapshot.high,
+            low=snapshot.low,
+            close=snapshot.price,
+            volume=snapshot.volume,
+            change_pct=snapshot.change_pct,
+        )
+
+        db.add(
+            daily_price
+        )
+
+    else:
+
+        daily_price.open = snapshot.open
+        daily_price.high = snapshot.high
+        daily_price.low = snapshot.low
+        daily_price.close = snapshot.price
+        daily_price.volume = snapshot.volume
+        daily_price.change_pct = snapshot.change_pct
+
+    db.commit()
 # =========================================================
 # Snapshot
 # ↓
@@ -191,6 +261,18 @@ def process_snapshot(
         if not asset.enabled:
 
             return []
+
+        save_market_quote(
+            db=db,
+            asset_id=asset.id,
+            snapshot=snapshot,
+        )
+
+        save_daily_price(
+            db=db,
+            asset_id=asset.id,
+            snapshot=snapshot,
+        )
 
         # =================================================
         # 保存最新市场行情

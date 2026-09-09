@@ -385,7 +385,7 @@ class MarketQuote(Base):
     )
 
 # =========================================================
-# 每日股票行情
+# 每日市场行情
 # =========================================================
 
 class DailyPrice(Base):
@@ -433,8 +433,8 @@ class DailyPrice(Base):
         Float
     )
 
-    volume: Mapped[int] = mapped_column(
-        Integer
+    volume: Mapped[float] = mapped_column(
+        Float
     )
 
     change_pct: Mapped[float] = (
