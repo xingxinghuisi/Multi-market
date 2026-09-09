@@ -5,7 +5,10 @@ from fastapi import (
     status,
 )
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+
+
 
 from database import SessionLocal
 from models import (
@@ -17,6 +20,8 @@ from models import (
 from schemas import (
     AlertRuleCreate,
     AlertRuleUpdate,
+    AssetCreate,
+    AssetUpdate,
 )
 
 
@@ -74,6 +79,23 @@ def get_default_user(
 
     return user
 
+
+def serialize_asset(
+    asset: Asset,
+):
+
+    return {
+        "id": asset.id,
+        "symbol": asset.symbol,
+        "name": asset.name,
+        "asset_type": asset.asset_type,
+        "venue": asset.venue,
+        "segment": asset.segment,
+        "currency": asset.currency,
+        "provider": asset.provider,
+        "enabled": asset.enabled,
+        "created_at": asset.created_at,
+    }
 
 def get_asset_or_404(
     db: Session,
@@ -222,12 +244,20 @@ def get_assets(
     symbol: str | None = None,
     venue: str | None = None,
     asset_type: str | None = None,
+    enabled: bool | None = None,
     db: Session = Depends(get_db),
 ):
-
-    statement = select(Asset).where(
-        Asset.enabled == True
+    statement = select(
+        Asset
     )
+
+    if enabled is not None:
+        statement = (
+            statement.where(
+                Asset.enabled
+                == enabled
+            )
+        )
 
     if symbol:
         statement = statement.where(
@@ -268,6 +298,291 @@ def get_assets(
         for asset in assets
     ]
 
+@app.get(
+    "/api/assets/{asset_id}"
+)
+def get_asset(
+    asset_id: int,
+    db: Session = Depends(get_db),
+):
+
+    asset = get_asset_or_404(
+        db,
+        asset_id,
+    )
+
+    return serialize_asset(
+        asset
+    )
+
+@app.post(
+    "/api/assets",
+    status_code=status.HTTP_201_CREATED,
+)
+def create_asset(
+    payload: AssetCreate,
+    db: Session = Depends(get_db),
+):
+
+    # =====================================================
+    # 标准化输入
+    # =====================================================
+
+    symbol = (
+        payload.symbol
+        .strip()
+        .upper()
+    )
+
+    venue = (
+        payload.venue
+        .strip()
+        .upper()
+    )
+
+    segment = (
+        payload.segment
+        .strip()
+        .upper()
+    )
+
+    provider = (
+        payload.provider
+        .strip()
+        .upper()
+    )
+
+    currency = (
+        payload.currency
+        .strip()
+        .upper()
+    )
+
+    asset_type = (
+        payload.asset_type
+        .strip()
+        .lower()
+    )
+
+    name = (
+        payload.name
+        .strip()
+    )
+
+    # =====================================================
+    # 检查重复
+    #
+    # 唯一键：
+    # venue + segment + symbol
+    # =====================================================
+
+    existing = db.scalar(
+        select(Asset).where(
+            Asset.symbol == symbol,
+            Asset.venue == venue,
+            Asset.segment == segment,
+        )
+    )
+
+    if existing:
+
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Asset already exists: "
+                f"{venue}/"
+                f"{segment}/"
+                f"{symbol}"
+            ),
+        )
+
+    # =====================================================
+    # 创建
+    # =====================================================
+
+    asset = Asset(
+
+        symbol=symbol,
+
+        name=name,
+
+        asset_type=asset_type,
+
+        venue=venue,
+
+        segment=segment,
+
+        currency=currency,
+
+        provider=provider,
+
+        enabled=payload.enabled,
+    )
+
+    db.add(
+        asset
+    )
+
+    try:
+
+        db.commit()
+
+    except IntegrityError:
+
+        db.rollback()
+
+        raise HTTPException(
+            status_code=409,
+            detail="Asset already exists",
+        )
+
+    db.refresh(
+        asset
+    )
+
+    return serialize_asset(
+        asset
+    )
+
+@app.patch(
+    "/api/assets/{asset_id}"
+)
+def update_asset(
+    asset_id: int,
+    payload: AssetUpdate,
+    db: Session = Depends(get_db),
+):
+
+    asset = get_asset_or_404(
+        db,
+        asset_id,
+    )
+
+    updates = payload.model_dump(
+        exclude_unset=True
+    )
+
+    if not updates:
+
+        raise HTTPException(
+            status_code=400,
+            detail="No fields to update",
+        )
+
+    # =====================================================
+    # 标准化字段
+    # =====================================================
+
+    upper_fields = {
+        "symbol",
+        "venue",
+        "segment",
+        "currency",
+        "provider",
+    }
+
+    for key, value in (
+        updates.items()
+    ):
+
+        if (
+            isinstance(
+                value,
+                str,
+            )
+        ):
+
+            value = (
+                value.strip()
+            )
+
+            if (
+                key
+                in upper_fields
+            ):
+
+                value = (
+                    value.upper()
+                )
+
+            elif (
+                key
+                == "asset_type"
+            ):
+
+                value = (
+                    value.lower()
+                )
+
+        setattr(
+            asset,
+            key,
+            value,
+        )
+
+    # =====================================================
+    # 保存
+    # =====================================================
+
+    try:
+
+        db.commit()
+
+    except IntegrityError:
+
+        db.rollback()
+
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Asset with the same "
+                "venue / segment / symbol "
+                "already exists"
+            ),
+        )
+
+    db.refresh(
+        asset
+    )
+
+    return serialize_asset(
+        asset
+    )
+
+@app.delete(
+    "/api/assets/{asset_id}"
+)
+def delete_asset(
+    asset_id: int,
+    db: Session = Depends(get_db),
+):
+
+    asset = get_asset_or_404(
+        db,
+        asset_id,
+    )
+
+    # =====================================================
+    # V0.11 使用软删除
+    #
+    # 保留历史 Alert / Notification 数据
+    # =====================================================
+
+    asset.enabled = False
+
+    db.commit()
+
+    db.refresh(
+        asset
+    )
+
+    return {
+        "deleted": True,
+        "soft_delete": True,
+        "asset": serialize_asset(
+            asset
+        ),
+    }
 
 # =========================================================
 # Stocks
