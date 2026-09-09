@@ -1,4 +1,7 @@
 import asyncio
+
+from providers.registry import provider_registry
+
 from datetime import (
     datetime,
     timedelta,
@@ -19,9 +22,6 @@ from models import (
 )
 from notification_service import (
     send_alert_notification,
-)
-from providers.binance import (
-    BinanceSpotProvider,
 )
 
 
@@ -276,6 +276,29 @@ def load_binance_symbols():
     return list(
         assets.keys()
     )
+
+def load_krx_assets():
+
+    with SessionLocal() as db:
+
+        assets = db.scalars(
+            select(
+                Asset
+            )
+            .where(
+                Asset.enabled == True,
+                Asset.provider == "PYKRX",
+                Asset.venue == "KRX",
+            )
+            .order_by(
+                Asset.id
+            )
+        ).all()
+
+        return {
+            asset.symbol: asset.id
+            for asset in assets
+        }
 
 # =========================================================
 # 打印 Alert 结果
@@ -569,7 +592,9 @@ async def run_binance_batch():
     print()
 
     provider = (
-        BinanceSpotProvider()
+        provider_registry.get(
+            "BINANCE"
+        )
     )
 
     # =====================================================
@@ -641,14 +666,177 @@ async def run_binance_batch():
             ),
         )
 
+def print_krx_snapshot(
+    symbol: str,
+    snapshot,
+    results,
+):
 
+    print()
+    print(
+        f"[KRX] {symbol}"
+    )
+
+    print(
+        f"Price: "
+        f"{snapshot.price:,.0f} KRW"
+    )
+
+    print(
+        f"Previous Close: "
+        f"{snapshot.reference_price:,.0f} KRW"
+    )
+
+    print(
+        f"Change: "
+        f"{snapshot.change_amount:+,.0f} KRW"
+    )
+
+    print(
+        f"Change %: "
+        f"{snapshot.change_pct:+.2f}%"
+    )
+
+    print(
+        f"Session: "
+        f"{snapshot.session_date}"
+    )
+
+    for result in results:
+
+        status = result.get(
+            "status"
+        )
+
+        if status in {
+            "triggered",
+            "rearmed",
+        }:
+
+            print(
+                f"[RULE] "
+                f"ID={result['rule_id']} "
+                f"{status}"
+            )
+
+
+async def run_krx_polling(
+    refresh_seconds: int = 30,
+):
+
+    provider = (
+        provider_registry.get(
+            "PYKRX"
+        )
+    )
+
+    print()
+    print(
+        "=" * 80
+    )
+
+    print(
+        "KRX Polling Worker"
+    )
+
+    print(
+        "=" * 80
+    )
+
+    while True:
+
+        assets = (
+            load_krx_assets()
+        )
+
+        if not assets:
+
+            print(
+                "[KRX] "
+                "没有启用的 KRX Asset"
+            )
+
+            await asyncio.sleep(
+                refresh_seconds
+            )
+
+            continue
+
+        for (
+            symbol,
+            asset_id,
+        ) in assets.items():
+
+            try:
+
+                # =====================================
+                # pykrx 是同步网络请求
+                #
+                # 放入线程，避免阻塞 Binance WebSocket
+                # =====================================
+
+                snapshot = await asyncio.to_thread(
+                    provider.get_snapshot,
+                    symbol,
+                )
+
+                if snapshot is None:
+
+                    print(
+                        f"[KRX] "
+                        f"{symbol} "
+                        f"没有行情数据"
+                    )
+
+                    continue
+
+                # =====================================
+                # 查询过程中 Asset 可能已被关闭
+                #
+                # process_snapshot 内部还会再次检查
+                # enabled
+                # =====================================
+
+                results = (
+                    process_snapshot(
+                        asset_id=asset_id,
+                        snapshot=snapshot,
+                    )
+                )
+
+                print_krx_snapshot(
+                    symbol=symbol,
+                    snapshot=snapshot,
+                    results=results,
+                )
+
+            except Exception as error:
+
+                print()
+                print(
+                    f"[KRX ERROR] "
+                    f"{symbol}"
+                )
+
+                print(
+                    f"Error: {error}"
+                )
+
+                print()
+
+        await asyncio.sleep(
+            refresh_seconds
+        )
 # =========================================================
 # Main
 # =========================================================
 
 async def main():
 
-    await run_binance_batch()
+    await asyncio.gather(
+        run_binance_batch(),
+        run_krx_polling(),
+    )
 
 
 if __name__ == "__main__":

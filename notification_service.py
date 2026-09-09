@@ -77,7 +77,7 @@ def build_alert_message(
         f"当前价格：{snapshot.price:,.2f} "
         f"{asset.currency}\n"
         f"触发阈值：{rule.value:,.2f}\n"
-        f"UTC+8 今日涨跌：{change_text}\n\n"
+        f"今日涨跌：{snapshot.change_pct:+.2f}%"
         f"Previous："
         f"{result.get('previous_value')}\n"
         f"Current："
