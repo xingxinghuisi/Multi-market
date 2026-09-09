@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from datetime import (
     datetime,
     timedelta,
@@ -22,12 +23,13 @@ class BinanceSpotProvider:
     """
     Binance Spot Provider
 
-    支持：
-    - 单 symbol
-    - 多 symbol 批量订阅
-
-    Crypto 今日涨跌统一：
-    UTC+8 00:00 → 当前价格
+    V0.9:
+    - 单 WebSocket
+    - 多 Symbol
+    - 动态 SUBSCRIBE
+    - 动态 UNSUBSCRIBE
+    - UTC+8 日涨跌
+    - 自动重连
     """
 
     BASE_URL = (
@@ -35,7 +37,7 @@ class BinanceSpotProvider:
     )
 
     # =====================================================
-    # Snapshot
+    # MarketSnapshot
     # =====================================================
 
     @staticmethod
@@ -122,41 +124,65 @@ class BinanceSpotProvider:
         )
 
     # =====================================================
-    # 批量实时行情
+    # Symbol → Binance Stream
     # =====================================================
 
-    async def stream_markets(
+    @staticmethod
+    def build_streams(
+        symbols: set[str],
+    ) -> list[str]:
+
+        streams = []
+
+        for symbol in sorted(
+            symbols
+        ):
+
+            stream_symbol = (
+                symbol.lower()
+            )
+
+            streams.append(
+                f"{stream_symbol}@trade"
+            )
+
+            streams.append(
+                f"{stream_symbol}"
+                f"@kline_1d@+08:00"
+            )
+
+        return streams
+
+    # =====================================================
+    # 创建 Symbol State
+    # =====================================================
+
+    @staticmethod
+    def create_state():
+
+        return {
+            "day_open": None,
+            "day_high": None,
+            "day_low": None,
+            "volume": None,
+            "quote_volume": None,
+            "session_date": None,
+        }
+
+    # =====================================================
+    # 动态 Market Stream
+    #
+    # symbol_loader:
+    # 每次调用返回当前数据库中需要订阅的 symbol
+    # =====================================================
+
+    async def stream_markets_dynamic(
         self,
-        symbols: list[str],
+        symbol_loader,
+        refresh_seconds: int = 5,
     ):
 
-        symbols = [
-            symbol.upper()
-            for symbol in symbols
-        ]
-
-        if not symbols:
-
-            return
-
-        # =================================================
-        # 每个 symbol 独立保存日线状态
-        # =================================================
-
-        states = {
-
-            symbol: {
-                "day_open": None,
-                "day_high": None,
-                "day_low": None,
-                "volume": None,
-                "quote_volume": None,
-                "session_date": None,
-            }
-
-            for symbol
-            in symbols
-        }
+        request_id = 1
 
         while True:
 
@@ -165,48 +191,8 @@ class BinanceSpotProvider:
                 print()
                 print(
                     "正在建立 Binance "
-                    "批量 WebSocket..."
+                    "动态 WebSocket..."
                 )
-
-                print(
-                    "订阅资产："
-                    + ", ".join(
-                        symbols
-                    )
-                )
-
-                # =========================================
-                # 每次重新连接
-                # 清空旧日线状态
-                # =========================================
-
-                for state in (
-                    states.values()
-                ):
-
-                    state[
-                        "day_open"
-                    ] = None
-
-                    state[
-                        "day_high"
-                    ] = None
-
-                    state[
-                        "day_low"
-                    ] = None
-
-                    state[
-                        "volume"
-                    ] = None
-
-                    state[
-                        "quote_volume"
-                    ] = None
-
-                    state[
-                        "session_date"
-                    ] = None
 
                 async with websockets.connect(
                     self.BASE_URL,
@@ -215,81 +201,261 @@ class BinanceSpotProvider:
                     close_timeout=10,
                 ) as websocket:
 
-                    # =====================================
-                    # 生成批量订阅列表
-                    #
-                    # 每个 symbol 两个 stream：
-                    #
-                    # trade
-                    # kline_1d@+08:00
-                    # =====================================
-
-                    streams = []
-
-                    for symbol in symbols:
-
-                        stream_symbol = (
-                            symbol.lower()
-                        )
-
-                        streams.append(
-                            f"{stream_symbol}"
-                            f"@trade"
-                        )
-
-                        streams.append(
-                            f"{stream_symbol}"
-                            f"@kline_1d@+08:00"
-                        )
-
-                    subscribe_message = {
-
-                        "method": "SUBSCRIBE",
-
-                        "params": streams,
-
-                        "id": "market-radar-batch",
-                    }
-
-                    await websocket.send(
-                        json.dumps(
-                            subscribe_message
-                        )
-                    )
-
                     print(
-                        "Binance 批量 WebSocket "
+                        "Binance 动态 WebSocket "
                         "连接成功"
                     )
 
-                    print(
-                        f"订阅 Symbol 数："
-                        f"{len(symbols)}"
-                    )
-
-                    print(
-                        f"订阅 Stream 数："
-                        f"{len(streams)}"
-                    )
-
-                    print(
-                        "Crypto 涨跌基准："
-                        "UTC+8 00:00"
-                    )
-
-                    print()
-
                     # =====================================
-                    # 接收消息
+                    # 当前已经订阅的 Symbol
                     # =====================================
 
-                    async for message in websocket:
+                    subscribed_symbols = set()
 
-                        payload = json.loads(
-                            message
+                    # =====================================
+                    # 每个币自己的 UTC+8 日线状态
+                    # =====================================
+
+                    states = {}
+
+                    last_refresh = 0.0
+
+                    # =====================================
+                    # WebSocket 主循环
+                    # =====================================
+
+                    while True:
+
+                        now_monotonic = (
+                            time.monotonic()
                         )
 
-                        # SUBSCRIBE 确认
+                        # =================================
+                        # 每隔 N 秒检查一次数据库
+                        # =================================
+
+                        if (
+                            now_monotonic
+                            - last_refresh
+                            >= refresh_seconds
+                        ):
+
+                            desired_symbols = {
+                                symbol.upper()
+
+                                for symbol
+                                in symbol_loader()
+                            }
+
+                            # -----------------------------
+                            # 新增 Symbol
+                            # -----------------------------
+
+                            added_symbols = (
+                                desired_symbols
+                                - subscribed_symbols
+                            )
+
+                            # -----------------------------
+                            # 删除 Symbol
+                            # -----------------------------
+
+                            removed_symbols = (
+                                subscribed_symbols
+                                - desired_symbols
+                            )
+
+                            # =============================
+                            # SUBSCRIBE
+                            # =============================
+
+                            if added_symbols:
+
+                                streams = (
+                                    self.build_streams(
+                                        added_symbols
+                                    )
+                                )
+
+                                message = {
+                                    "method": (
+                                        "SUBSCRIBE"
+                                    ),
+
+                                    "params": (
+                                        streams
+                                    ),
+
+                                    "id": (
+                                        request_id
+                                    ),
+                                }
+
+                                request_id += 1
+
+                                await websocket.send(
+                                    json.dumps(
+                                        message
+                                    )
+                                )
+
+                                for symbol in (
+                                    added_symbols
+                                ):
+
+                                    states[
+                                        symbol
+                                    ] = (
+                                        self
+                                        .create_state()
+                                    )
+
+                                subscribed_symbols.update(
+                                    added_symbols
+                                )
+
+                                print(
+                                    "[SUBSCRIBE] "
+                                    + ", ".join(
+                                        sorted(
+                                            added_symbols
+                                        )
+                                    )
+                                )
+
+                            # =============================
+                            # UNSUBSCRIBE
+                            # =============================
+
+                            if removed_symbols:
+
+                                streams = (
+                                    self.build_streams(
+                                        removed_symbols
+                                    )
+                                )
+
+                                message = {
+                                    "method": (
+                                        "UNSUBSCRIBE"
+                                    ),
+
+                                    "params": (
+                                        streams
+                                    ),
+
+                                    "id": (
+                                        request_id
+                                    ),
+                                }
+
+                                request_id += 1
+
+                                await websocket.send(
+                                    json.dumps(
+                                        message
+                                    )
+                                )
+
+                                for symbol in (
+                                    removed_symbols
+                                ):
+
+                                    states.pop(
+                                        symbol,
+                                        None,
+                                    )
+
+                                subscribed_symbols.difference_update(
+                                    removed_symbols
+                                )
+
+                                print(
+                                    "[UNSUBSCRIBE] "
+                                    + ", ".join(
+                                        sorted(
+                                            removed_symbols
+                                        )
+                                    )
+                                )
+
+                            # =============================
+                            # 状态输出
+                            # =============================
+
+                            if (
+                                added_symbols
+                                or removed_symbols
+                            ):
+
+                                print(
+                                    "当前订阅："
+                                    + (
+                                        ", ".join(
+                                            sorted(
+                                                subscribed_symbols
+                                            )
+                                        )
+                                        if subscribed_symbols
+                                        else "无"
+                                    )
+                                )
+
+                                print(
+                                    f"Symbol 数："
+                                    f"{len(
+                                        subscribed_symbols
+                                    )}"
+                                )
+
+                                print(
+                                    f"Stream 数："
+                                    f"{len(
+                                        subscribed_symbols
+                                    ) * 2}"
+                                )
+
+                                print(
+                                    "Crypto 涨跌基准："
+                                    "UTC+8 00:00"
+                                )
+
+                                print()
+
+                            last_refresh = (
+                                now_monotonic
+                            )
+
+                        # =================================
+                        # 接收 WebSocket
+                        #
+                        # timeout 是为了让数据库检查
+                        # 不会被 websocket.recv 永久卡住
+                        # =================================
+
+                        try:
+
+                            raw_message = (
+                                await asyncio.wait_for(
+                                    websocket.recv(),
+                                    timeout=1.0,
+                                )
+                            )
+
+                        except asyncio.TimeoutError:
+
+                            continue
+
+                        payload = (
+                            json.loads(
+                                raw_message
+                            )
+                        )
+
+                        # =================================
+                        # SUBSCRIBE / UNSUBSCRIBE ACK
+                        # =================================
+
                         if (
                             "result" in payload
                             and
@@ -319,19 +485,30 @@ class BinanceSpotProvider:
                             symbol.upper()
                         )
 
+                        # =================================
+                        # 可能是 UNSUBSCRIBE 途中
+                        # 残留的最后几条消息
+                        # =================================
+
                         if (
                             symbol
-                            not in states
+                            not in subscribed_symbols
                         ):
 
                             continue
 
                         state = (
-                            states[symbol]
+                            states.get(
+                                symbol
+                            )
                         )
 
+                        if state is None:
+
+                            continue
+
                         # =================================
-                        # UTC+8 日 K
+                        # UTC+8 KLINE
                         # =================================
 
                         if (
@@ -378,16 +555,26 @@ class BinanceSpotProvider:
                             )
 
                             event_time = (
-                                datetime.fromtimestamp(
-                                    data["E"] / 1000,
-                                    tz=timezone.utc,
+                                datetime
+                                .fromtimestamp(
+                                    data["E"]
+                                    / 1000,
+
+                                    tz=(
+                                        timezone.utc
+                                    ),
                                 )
                             )
 
                             kline_start = (
-                                datetime.fromtimestamp(
-                                    kline["t"] / 1000,
-                                    tz=timezone.utc,
+                                datetime
+                                .fromtimestamp(
+                                    kline["t"]
+                                    / 1000,
+
+                                    tz=(
+                                        timezone.utc
+                                    ),
                                 )
                             )
 
@@ -401,7 +588,7 @@ class BinanceSpotProvider:
                                 .date()
                             )
 
-                            snapshot = (
+                            yield (
                                 self.build_snapshot(
 
                                     symbol=symbol,
@@ -452,12 +639,10 @@ class BinanceSpotProvider:
                                 )
                             )
 
-                            yield snapshot
-
                             continue
 
                         # =================================
-                        # Trade
+                        # TRADE
                         # =================================
 
                         if (
@@ -470,9 +655,14 @@ class BinanceSpotProvider:
                             )
 
                             event_time = (
-                                datetime.fromtimestamp(
-                                    data["T"] / 1000,
-                                    tz=timezone.utc,
+                                datetime
+                                .fromtimestamp(
+                                    data["T"]
+                                    / 1000,
+
+                                    tz=(
+                                        timezone.utc
+                                    ),
                                 )
                             )
 
@@ -484,9 +674,9 @@ class BinanceSpotProvider:
                                 .date()
                             )
 
-                            # --------------------------------
-                            # 还没收到日 K
-                            # --------------------------------
+                            # -----------------------------
+                            # 尚未获得当前 UTC+8 日 K
+                            # -----------------------------
 
                             if (
                                 state[
@@ -502,10 +692,9 @@ class BinanceSpotProvider:
 
                                 continue
 
-                            # --------------------------------
-                            # 刚跨 UTC+8 00:00
-                            # 等新日 K 到来
-                            # --------------------------------
+                            # -----------------------------
+                            # UTC+8 跨日保护
+                            # -----------------------------
 
                             if (
                                 trade_date
@@ -516,9 +705,9 @@ class BinanceSpotProvider:
 
                                 continue
 
-                            # --------------------------------
-                            # 更新 high
-                            # --------------------------------
+                            # -----------------------------
+                            # High
+                            # -----------------------------
 
                             if (
                                 state[
@@ -544,9 +733,9 @@ class BinanceSpotProvider:
                                     current_price,
                                 )
 
-                            # --------------------------------
-                            # 更新 low
-                            # --------------------------------
+                            # -----------------------------
+                            # Low
+                            # -----------------------------
 
                             if (
                                 state[
@@ -572,7 +761,7 @@ class BinanceSpotProvider:
                                     current_price,
                                 )
 
-                            snapshot = (
+                            yield (
                                 self.build_snapshot(
 
                                     symbol=symbol,
@@ -623,8 +812,6 @@ class BinanceSpotProvider:
                                 )
                             )
 
-                            yield snapshot
-
             except asyncio.CancelledError:
 
                 raise
@@ -632,12 +819,12 @@ class BinanceSpotProvider:
             except Exception as error:
 
                 print(
-                    f"Binance 批量连接异常："
-                    f"{error}"
+                    "Binance 动态 WebSocket "
+                    f"异常：{error}"
                 )
 
                 print(
-                    "3 秒后重新连接..."
+                    "3 秒后自动重新连接..."
                 )
 
                 await asyncio.sleep(
@@ -645,9 +832,34 @@ class BinanceSpotProvider:
                 )
 
     # =====================================================
-    # 单 Symbol 兼容接口
-    #
-    # V0.5 的测试文件继续可以使用
+    # V0.8 兼容接口
+    # =====================================================
+
+    async def stream_markets(
+        self,
+        symbols: list[str],
+    ):
+
+        fixed_symbols = [
+            symbol.upper()
+            for symbol in symbols
+        ]
+
+        def loader():
+
+            return fixed_symbols
+
+        async for snapshot in (
+            self.stream_markets_dynamic(
+                symbol_loader=loader,
+                refresh_seconds=3600,
+            )
+        ):
+
+            yield snapshot
+
+    # =====================================================
+    # V0.5 单币兼容接口
     # =====================================================
 
     async def stream_market(

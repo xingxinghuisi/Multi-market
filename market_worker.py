@@ -258,6 +258,24 @@ def load_binance_assets():
             in assets
         }
 
+def load_binance_symbols():
+    """
+    Provider 每隔几秒调用一次。
+
+    只返回当前数据库中：
+    - enabled = true
+    - provider = BINANCE
+
+    的 Symbol。
+    """
+
+    assets = (
+        load_binance_assets()
+    )
+
+    return list(
+        assets.keys()
+    )
 
 # =========================================================
 # 打印 Alert 结果
@@ -559,17 +577,30 @@ async def run_binance_batch():
     # =====================================================
 
     async for snapshot in (
-        provider.stream_markets(
-            symbols
-        )
+            provider.stream_markets_dynamic(
+                symbol_loader=(
+                        load_binance_symbols
+                ),
+                refresh_seconds=5,
+            )
     ):
 
         symbol = (
             snapshot.symbol
         )
 
+        # =========================================================
+        # 每次行情都根据数据库重新解析 Asset ID
+        #
+        # V0.9 动态资产需要这样做。
+        # =========================================================
+
+        current_assets = (
+            load_binance_assets()
+        )
+
         asset_id = (
-            assets.get(
+            current_assets.get(
                 symbol
             )
         )
