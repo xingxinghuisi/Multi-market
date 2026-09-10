@@ -1,7 +1,12 @@
+import asyncio
+from contextlib import suppress
+
 from fastapi import (
     Depends,
     FastAPI,
     HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
     status,
 )
 from sqlalchemy import select
@@ -27,6 +32,66 @@ from schemas import (
     AssetUpdate,
 )
 
+# =========================================================
+# Realtime WebSocket Connections
+# =========================================================
+
+class ConnectionManager:
+
+    def __init__(self):
+
+        self.active_connections: list[WebSocket] = []
+
+    def add(
+        self,
+        websocket: WebSocket,
+    ):
+
+        self.active_connections.append(
+            websocket
+        )
+
+    def disconnect(
+        self,
+        websocket: WebSocket,
+    ):
+
+        if websocket in self.active_connections:
+
+            self.active_connections.remove(
+                websocket
+            )
+
+    async def broadcast_json(
+        self,
+        data,
+    ):
+
+        disconnected = []
+
+        for websocket in self.active_connections:
+
+            try:
+
+                await websocket.send_json(
+                    data
+                )
+
+            except Exception:
+
+                disconnected.append(
+                    websocket
+                )
+
+        for websocket in disconnected:
+
+            self.disconnect(
+                websocket
+            )
+
+
+manager = ConnectionManager()
+
 
 # =========================================================
 # FastAPI
@@ -39,6 +104,41 @@ app = FastAPI(
     ),
     version="0.3.0",
 )
+
+@app.on_event(
+    "startup"
+)
+async def start_market_broadcaster():
+
+    app.state.market_broadcast_task = (
+        asyncio.create_task(
+            market_broadcast_loop()
+        )
+    )
+
+
+@app.on_event(
+    "shutdown"
+)
+async def stop_market_broadcaster():
+
+    task = getattr(
+        app.state,
+        "market_broadcast_task",
+        None,
+    )
+
+    if task is None:
+
+        return
+
+    task.cancel()
+
+    with suppress(
+        asyncio.CancelledError
+    ):
+
+        await task
 
 
 # =========================================================
@@ -129,6 +229,171 @@ def serialize_market_quote(
 
         "updated_at": quote.updated_at,
     }
+
+def load_realtime_market_quotes():
+
+    with SessionLocal() as db:
+
+        rows = db.execute(
+            select(
+                MarketQuote,
+                Asset,
+            )
+            .join(
+                Asset,
+                MarketQuote.asset_id
+                == Asset.id,
+            )
+            .where(
+                Asset.enabled == True
+            )
+            .order_by(
+                Asset.id
+            )
+        ).all()
+
+        data = []
+
+        for quote, asset in rows:
+
+            data.append(
+                {
+                    "type": "market_update",
+
+                    "asset_id": asset.id,
+                    "symbol": asset.symbol,
+                    "name": asset.name,
+
+                    "asset_type": asset.asset_type,
+                    "venue": asset.venue,
+                    "currency": asset.currency,
+
+                    "price": quote.price,
+
+                    "reference_price":
+                        quote.reference_price,
+
+                    "change_amount":
+                        quote.change_amount,
+
+                    "change_pct":
+                        quote.change_pct,
+
+                    "open": quote.open,
+                    "high": quote.high,
+                    "low": quote.low,
+
+                    "volume": quote.volume,
+                    "quote_volume":
+                        quote.quote_volume,
+
+                    "session_date":
+                        quote.session_date,
+
+                    "reference_type":
+                        quote.reference_type,
+
+                    "reference_timezone":
+                        quote.reference_timezone,
+
+                    "event_time": (
+                        quote.event_time.isoformat()
+                        if quote.event_time
+                        else None
+                    ),
+
+                    "updated_at": (
+                        quote.updated_at.isoformat()
+                        if quote.updated_at
+                        else None
+                    ),
+                }
+            )
+
+        return data
+
+async def market_broadcast_loop():
+
+    last_versions = {}
+
+    while True:
+
+        try:
+
+            quotes = await asyncio.to_thread(
+                load_realtime_market_quotes
+            )
+
+            current_asset_ids = set()
+
+            for quote in quotes:
+
+                asset_id = quote[
+                    "asset_id"
+                ]
+
+                current_asset_ids.add(
+                    asset_id
+                )
+
+                version = (
+                    quote["price"],
+                    quote["change_pct"],
+                    quote["high"],
+                    quote["low"],
+                    quote["volume"],
+                    quote["session_date"],
+                )
+
+                previous_version = (
+                    last_versions.get(
+                        asset_id
+                    )
+                )
+
+                if (
+                    previous_version
+                    != version
+                ):
+
+                    await manager.broadcast_json(
+                        quote
+                    )
+
+                    last_versions[
+                        asset_id
+                    ] = version
+
+            # =============================================
+            # 清理已经 disabled / 删除的 Asset 状态
+            # =============================================
+
+            removed_asset_ids = (
+                set(last_versions.keys())
+                - current_asset_ids
+            )
+
+            for asset_id in removed_asset_ids:
+
+                last_versions.pop(
+                    asset_id,
+                    None,
+                )
+
+        except asyncio.CancelledError:
+
+            raise
+
+        except Exception as error:
+
+            print(
+                f"[WEBSOCKET ERROR] "
+                f"{error}"
+            )
+
+        await asyncio.sleep(
+            0.5
+        )
 
 def serialize_asset(
     asset: Asset,
@@ -368,6 +633,65 @@ def get_asset(
 @app.get(
     "/api/market/latest"
 )
+
+@app.websocket(
+    "/ws/market"
+)
+async def websocket_market(
+    websocket: WebSocket,
+):
+
+    await websocket.accept()
+
+    try:
+
+        # =================================================
+        # 新客户端连接后
+        # 先立即发送完整市场快照
+        # =================================================
+
+        initial_quotes = (
+            await asyncio.to_thread(
+                load_realtime_market_quotes
+            )
+        )
+
+        await websocket.send_json(
+            {
+                "type": "market_snapshot",
+                "count": len(
+                    initial_quotes
+                ),
+                "data": initial_quotes,
+            }
+        )
+
+        manager.add(
+            websocket
+        )
+
+        # =================================================
+        # 保持连接
+        #
+        # 客户端不需要主动持续发送数据
+        # =================================================
+
+        while True:
+
+            await websocket.receive_text()
+
+    except WebSocketDisconnect:
+
+        manager.disconnect(
+            websocket
+        )
+
+    except Exception:
+
+        manager.disconnect(
+            websocket
+        )
+
 def get_latest_market_quotes(
     venue: str | None = None,
     asset_type: str | None = None,
