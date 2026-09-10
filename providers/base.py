@@ -126,3 +126,18 @@ class MarketSnapshot:
         return asdict(
             self
         )
+
+
+@dataclass
+class DailyBar:
+
+    date: date
+
+    open: float
+    high: float
+    low: float
+    close: float
+
+    volume: float
+
+    change_pct: float | None

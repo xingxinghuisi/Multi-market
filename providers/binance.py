@@ -10,8 +10,12 @@ from datetime import (
 import websockets
 
 from providers.base import (
+    DailyBar,
     MarketSnapshot,
 )
+
+from urllib.parse import urlencode
+from urllib.request import urlopen
 
 
 UTC8 = timezone(
@@ -34,6 +38,9 @@ class BinanceSpotProvider:
 
     BASE_URL = (
         "wss://stream.binance.com:9443/stream"
+    )
+    REST_BASE_URL = (
+        "https://api.binance.com"
     )
 
     # =====================================================
@@ -122,6 +129,182 @@ class BinanceSpotProvider:
                 "UTC+08:00"
             ),
         )
+
+    def get_daily_history(
+            self,
+            symbol: str,
+            start_date,
+            end_date,
+    ) -> list[DailyBar]:
+
+        # =====================================================
+        # Binance 日线必须继续使用 UTC+8
+        #
+        # 与实时行情定义保持一致
+        # =====================================================
+
+        start_datetime = datetime(
+            start_date.year,
+            start_date.month,
+            start_date.day,
+            tzinfo=UTC8,
+        )
+
+        end_datetime = datetime(
+            end_date.year,
+            end_date.month,
+            end_date.day,
+            23,
+            59,
+            59,
+            999000,
+            tzinfo=UTC8,
+        )
+
+        start_ms = int(
+            start_datetime.timestamp()
+            * 1000
+        )
+
+        end_ms = int(
+            end_datetime.timestamp()
+            * 1000
+        )
+
+        bars = []
+
+        current_start = (
+            start_ms
+        )
+
+        # =====================================================
+        # Binance 每次最多返回 1000 根 Kline
+        # 所以这里支持自动分页
+        # =====================================================
+
+        while (
+                current_start
+                <= end_ms
+        ):
+
+            params = {
+                "symbol": (
+                    symbol.upper()
+                ),
+                "interval": "1d",
+                "timeZone": "8",
+                "startTime": (
+                    current_start
+                ),
+                "endTime": (
+                    end_ms
+                ),
+                "limit": 1000,
+            }
+
+            url = (
+                f"{self.REST_BASE_URL}"
+                f"/api/v3/klines?"
+                f"{urlencode(params)}"
+            )
+
+            with urlopen(
+                    url,
+                    timeout=15,
+            ) as response:
+
+                data = json.loads(
+                    response.read()
+                    .decode("utf-8")
+                )
+
+            if not data:
+                break
+
+            for item in data:
+
+                open_time = (
+                    int(item[0])
+                )
+
+                open_price = float(
+                    item[1]
+                )
+
+                high_price = float(
+                    item[2]
+                )
+
+                low_price = float(
+                    item[3]
+                )
+
+                close_price = float(
+                    item[4]
+                )
+
+                volume = float(
+                    item[5]
+                )
+
+                session_date = (
+                    datetime.fromtimestamp(
+                        open_time / 1000,
+                        tz=UTC8,
+                    ).date()
+                )
+
+                if open_price:
+
+                    change_pct = (
+                            (
+                                    close_price
+                                    - open_price
+                            )
+                            / open_price
+                            * 100
+                    )
+
+                else:
+
+                    change_pct = None
+
+                bars.append(
+                    DailyBar(
+                        date=session_date,
+                        open=open_price,
+                        high=high_price,
+                        low=low_price,
+                        close=close_price,
+                        volume=volume,
+                        change_pct=change_pct,
+                    )
+                )
+
+            # 最后一根 Kline 的开盘时间
+            last_open_time = int(
+                data[-1][0]
+            )
+
+            next_start = (
+                    last_open_time
+                    + 1
+            )
+
+            if (
+                    next_start
+                    <= current_start
+            ):
+                break
+
+            current_start = (
+                next_start
+            )
+
+            if len(data) < 1000:
+                break
+
+        return bars
 
     # =====================================================
     # Symbol → Binance Stream

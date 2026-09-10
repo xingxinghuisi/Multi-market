@@ -3,7 +3,10 @@ from zoneinfo import ZoneInfo
 
 from pykrx import stock
 
-from providers.base import MarketSnapshot
+from providers.base import (
+    DailyBar,
+    MarketSnapshot,
+)
 
 
 KST = ZoneInfo(
@@ -156,3 +159,75 @@ class KRXProvider:
                 "Asia/Seoul"
             ),
         )
+
+    def get_daily_history(
+            self,
+            symbol: str,
+            start_date,
+            end_date,
+    ) -> list[DailyBar]:
+
+        df = stock.get_market_ohlcv_by_date(
+            start_date.strftime(
+                "%Y%m%d"
+            ),
+            end_date.strftime(
+                "%Y%m%d"
+            ),
+            symbol,
+        )
+
+        if (
+                df is None
+                or df.empty
+        ):
+            return []
+
+        bars = []
+
+        for index, row in df.iterrows():
+
+            open_price = float(
+                row["시가"]
+            )
+
+            high_price = float(
+                row["고가"]
+            )
+
+            low_price = float(
+                row["저가"]
+            )
+
+            close_price = float(
+                row["종가"]
+            )
+
+            volume = float(
+                row["거래량"]
+            )
+
+            # PyKRX 本身提供日涨跌率
+            if "등락률" in row.index:
+
+                change_pct = float(
+                    row["등락률"]
+                )
+
+            else:
+
+                change_pct = None
+
+            bars.append(
+                DailyBar(
+                    date=index.date(),
+                    open=open_price,
+                    high=high_price,
+                    low=low_price,
+                    close=close_price,
+                    volume=volume,
+                    change_pct=change_pct,
+                )
+            )
+
+        return bars
