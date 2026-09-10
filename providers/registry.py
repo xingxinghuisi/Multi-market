@@ -1,52 +1,110 @@
-from providers.binance import BinanceSpotProvider
-from providers.krx import KRXProvider
-
-
 class ProviderRegistry:
+
+    SUPPORTED_PROVIDERS = {
+        "BINANCE",
+        "PYKRX",
+        "INFOWAY",
+    }
 
     def __init__(self):
 
-        self._providers = {
-            "BINANCE": BinanceSpotProvider(),
-            "PYKRX": KRXProvider(),
-        }
+        # Provider 改为懒加载。
+        # 只有真正调用 get() 时才创建实例。
+        self._providers = {}
 
-    def get(self, provider_name: str):
+    def get(
+        self,
+        provider_name: str,
+    ):
 
-        if not provider_name:
-            raise ValueError(
-                "Provider name is required"
-            )
-
-        provider_name = (
+        name = (
             provider_name
             .strip()
             .upper()
         )
 
-        provider = self._providers.get(
-            provider_name
-        )
+        # 已经创建过，直接复用
+        if name in self._providers:
 
-        if provider is None:
+            return self._providers[
+                name
+            ]
+
+        # =============================================
+        # Binance
+        # =============================================
+
+        if name == "BINANCE":
+
+            from providers.binance import (
+                BinanceSpotProvider,
+            )
+
+            provider = (
+                BinanceSpotProvider()
+            )
+
+        # =============================================
+        # PyKRX
+        #
+        # 只有历史回填等真正需要 PyKRX 时
+        # 才会 import / 初始化
+        # =============================================
+
+        elif name == "PYKRX":
+
+            from providers.krx import (
+                KRXProvider,
+            )
+
+            provider = (
+                KRXProvider()
+            )
+
+        # =============================================
+        # Infoway
+        # =============================================
+
+        elif name == "INFOWAY":
+
+            from providers.infoway import (
+                InfowayKoreaProvider,
+            )
+
+            provider = (
+                InfowayKoreaProvider()
+            )
+
+        else:
+
             raise ValueError(
-                f"Unsupported provider: "
+                "Unsupported provider: "
                 f"{provider_name}"
             )
 
+        self._providers[
+            name
+        ] = provider
+
         return provider
 
-    def has(self, provider_name: str):
+    def has(
+        self,
+        provider_name: str,
+    ):
 
-        if not provider_name:
-            return False
-
-        return (
+        name = (
             provider_name
             .strip()
             .upper()
-            in self._providers
+        )
+
+        return (
+            name
+            in self.SUPPORTED_PROVIDERS
         )
 
 
-provider_registry = ProviderRegistry()
+provider_registry = (
+    ProviderRegistry()
+)

@@ -1,0 +1,159 @@
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family:
+        Arial,
+        sans-serif;
+
+    background: #111827;
+    color: #f9fafb;
+}
+
+.container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 32px 20px;
+}
+
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 32px;
+}
+
+h1 {
+    margin: 0;
+}
+
+h2 {
+    margin-top: 32px;
+}
+
+#connection-status {
+    font-size: 14px;
+    color: #9ca3af;
+}
+
+.market-grid {
+    display: grid;
+
+    grid-template-columns:
+        repeat(
+            auto-fill,
+            minmax(240px, 1fr)
+        );
+
+    gap: 16px;
+}
+
+.market-card {
+    padding: 18px;
+    border-radius: 12px;
+    background: #1f2937;
+}
+
+.market-symbol {
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.market-name {
+    margin-top: 4px;
+    font-size: 13px;
+    color: #9ca3af;
+}
+
+.market-price {
+    margin-top: 18px;
+    font-size: 26px;
+    font-weight: 700;
+}
+
+.market-change {
+    margin-top: 8px;
+    font-size: 16px;
+}
+
+.positive {
+    color: #22c55e;
+}
+
+.negative {
+    color: #ef4444;
+}
+
+.neutral {
+    color: #d1d5db;
+}
+.market-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.market-symbol {
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.market-name {
+    margin-top: 4px;
+    font-size: 13px;
+    opacity: 0.65;
+}
+
+.market-price {
+    margin-top: 18px;
+    font-size: 26px;
+    font-weight: 700;
+}
+
+.market-currency {
+    font-size: 12px;
+    font-weight: 400;
+    opacity: 0.55;
+}
+
+.market-change {
+    margin-top: 6px;
+    font-size: 15px;
+    font-weight: 600;
+}
+
+.market-status {
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.status-live {
+    opacity: 1;
+}
+
+.status-stale {
+    opacity: 0.45;
+}
+
+.market-meta {
+    margin-top: 18px;
+    font-size: 12px;
+    opacity: 0.55;
+}
+
+.market-updated {
+    margin-top: 5px;
+    font-size: 11px;
+    opacity: 0.45;
+}
+
+.connection-live {
+    font-weight: 600;
+}
+
+.connection-offline {
+    opacity: 0.55;
+}

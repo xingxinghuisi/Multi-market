@@ -2,6 +2,8 @@ import asyncio
 
 from providers.registry import provider_registry
 
+from providers.infoway import InfowayKoreaProvider
+
 from datetime import (
     date,
     datetime,
@@ -29,7 +31,7 @@ from notification_service import (
 
 
 # =========================================================
-# Market Radar V0.8
+# Market Radar V0.18
 #
 # Binance Batch Worker
 # =========================================================
@@ -491,6 +493,29 @@ def load_krx_assets():
 # 打印 Alert 结果
 # =========================================================
 
+def load_infoway_korea_assets():
+
+    with SessionLocal() as db:
+
+        assets = db.scalars(
+            select(
+                Asset
+            )
+            .where(
+                Asset.enabled == True,
+                Asset.venue == "KRX",
+            )
+            .order_by(
+                Asset.id
+            )
+        ).all()
+
+        return {
+            asset.symbol: asset.id
+            for asset in assets
+        }
+
+
 def print_alert_results(
     symbol: str,
     snapshot,
@@ -747,7 +772,7 @@ async def run_binance_batch():
     )
 
     print(
-        "Market Radar V0.8"
+        "Market Radar V0.18"
     )
 
     print(
@@ -1022,8 +1047,107 @@ async def main():
 
     await asyncio.gather(
         run_binance_batch(),
-        run_krx_polling(),
+        run_infoway_korea(),
     )
+
+async def run_infoway_korea():
+
+    assets = (
+        load_infoway_korea_assets()
+    )
+
+    if not assets:
+
+        print(
+            "没有启用的 KRX Asset。"
+        )
+
+        return
+
+    print()
+    print(
+        "=" * 80
+    )
+
+    print(
+        "Infoway Korea "
+        "Realtime Worker"
+    )
+
+    print(
+        "=" * 80
+    )
+
+    print()
+
+    print(
+        "KRX Realtime Assets:"
+    )
+
+    for (
+        symbol,
+        asset_id,
+    ) in assets.items():
+
+        print(
+            f"- {symbol} "
+            f"(Asset ID="
+            f"{asset_id})"
+        )
+
+    print()
+
+    provider = (
+        InfowayKoreaProvider()
+    )
+
+    async for snapshot in (
+        provider.stream_markets(
+            set(
+                assets.keys()
+            )
+        )
+    ):
+
+        symbol = (
+            snapshot.symbol
+        )
+
+        # 每次重新读取
+        # 防止运行过程中 Asset 被关闭
+        current_assets = (
+            load_infoway_korea_assets()
+        )
+
+        asset_id = (
+            current_assets.get(
+                symbol
+            )
+        )
+
+        if asset_id is None:
+
+            continue
+
+        results = (
+            process_snapshot(
+                asset_id=asset_id,
+                snapshot=snapshot,
+            )
+        )
+
+        print(
+            "[KRX LIVE] "
+            f"{symbol} | "
+            f"{snapshot.price:,.0f} KRW | "
+            f"{snapshot.change_pct:+.2f}%"
+        )
+
+        print_alert_results(
+            symbol=symbol,
+            snapshot=snapshot,
+            results=results,
+        )
 
 
 if __name__ == "__main__":

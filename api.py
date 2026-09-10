@@ -1,6 +1,11 @@
 import asyncio
 from contextlib import suppress
 
+from pathlib import Path
+
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+
 from fastapi import (
     Depends,
     FastAPI,
@@ -104,6 +109,32 @@ app = FastAPI(
     ),
     version="0.3.0",
 )
+
+BASE_DIR = (
+    Path(__file__)
+    .resolve()
+    .parent
+)
+
+WEB_DIR = (
+    BASE_DIR
+    / "web"
+)
+
+STATIC_DIR = (
+    WEB_DIR
+    / "static"
+)
+
+
+app.mount(
+    "/static",
+    StaticFiles(
+        directory=STATIC_DIR
+    ),
+    name="static",
+)
+
 
 @app.on_event(
     "startup"
@@ -531,12 +562,10 @@ def serialize_rule(
 @app.get("/")
 def root():
 
-    return {
-        "app": "Market Radar",
-        "api_version": "0.3.0",
-        "status": "running",
-    }
-
+    return FileResponse(
+        WEB_DIR
+        / "index.html"
+    )
 
 # =========================================================
 # Health
@@ -630,10 +659,6 @@ def get_asset(
         asset
     )
 
-@app.get(
-    "/api/market/latest"
-)
-
 @app.websocket(
     "/ws/market"
 )
@@ -691,6 +716,10 @@ async def websocket_market(
         manager.disconnect(
             websocket
         )
+
+@app.get(
+    "/api/market/latest"
+)
 
 def get_latest_market_quotes(
     venue: str | None = None,
