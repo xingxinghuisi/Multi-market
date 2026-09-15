@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import time
 from datetime import (
     datetime,
@@ -8,6 +9,11 @@ from datetime import (
 )
 
 import websockets
+
+from websockets_proxy import (
+    Proxy,
+    proxy_connect,
+)
 
 from providers.base import (
     DailyBar,
@@ -377,12 +383,45 @@ class BinanceSpotProvider:
                     "动态 WebSocket..."
                 )
 
-                async with websockets.connect(
-                    self.BASE_URL,
-                    ping_interval=20,
-                    ping_timeout=20,
-                    close_timeout=10,
-                ) as websocket:
+                proxy_url = os.getenv(
+                    "BINANCE_PROXY_URL"
+                )
+
+                if proxy_url:
+
+                    print(
+                        "Binance 使用代理：",
+                        proxy_url,
+                    )
+
+                    proxy = Proxy.from_url(
+                        proxy_url
+                    )
+
+                    connection = proxy_connect(
+                        self.BASE_URL,
+                        proxy=proxy,
+                        open_timeout=15,
+                        ping_interval=20,
+                        ping_timeout=20,
+                        close_timeout=10,
+                    )
+
+                else:
+
+                    print(
+                        "Binance 未设置代理，使用直连"
+                    )
+
+                    connection = websockets.connect(
+                        self.BASE_URL,
+                        open_timeout=15,
+                        ping_interval=20,
+                        ping_timeout=20,
+                        close_timeout=10,
+                    )
+
+                async with connection as websocket:
 
                     print(
                         "Binance 动态 WebSocket "
@@ -999,15 +1038,47 @@ class BinanceSpotProvider:
 
                 raise
 
+
             except Exception as error:
 
+                import traceback
+
+                print()
+
                 print(
-                    "Binance 动态 WebSocket "
-                    f"异常：{error}"
+
+                    "Binance 动态 WebSocket 异常"
+
                 )
 
                 print(
+
+                    "异常类型：",
+
+                    type(error).__name__,
+
+                )
+
+                print(
+
+                    "异常 repr：",
+
+                    repr(error),
+
+                )
+
+                print(
+
+                    "完整 traceback："
+
+                )
+
+                traceback.print_exc()
+
+                print(
+
                     "3 秒后自动重新连接..."
+
                 )
 
                 await asyncio.sleep(

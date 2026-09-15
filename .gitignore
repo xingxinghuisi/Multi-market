@@ -37,3 +37,8 @@ Thumbs.db
 # Temporary
 *.tmp
 *.bak
+
+# Local provider diagnostic scripts
+infoway_global_test.py
+moomoo_provider_test.py
+moomoo_realtime_test.py

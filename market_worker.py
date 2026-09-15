@@ -4,6 +4,10 @@ from providers.registry import provider_registry
 
 from providers.infoway import InfowayKoreaProvider
 
+from providers.moomoo import (
+    MoomooRealtimeProvider,
+)
+
 from datetime import (
     date,
     datetime,
@@ -70,14 +74,15 @@ def format_rule(
 
 def save_market_quote(
     db,
-    asset_id: int,
+    asset_id,
     snapshot,
 ):
 
     quote = db.scalar(
         select(
             MarketQuote
-        ).where(
+        )
+        .where(
             MarketQuote.asset_id
             == asset_id
         )
@@ -87,19 +92,85 @@ def save_market_quote(
 
         quote = MarketQuote(
             asset_id=asset_id,
+
             price=snapshot.price,
-            reference_price=snapshot.reference_price,
-            change_amount=snapshot.change_amount,
-            change_pct=snapshot.change_pct,
+
+            reference_price=(
+                snapshot.reference_price
+            ),
+
+            change_amount=(
+                snapshot.change_amount
+            ),
+
+            change_pct=(
+                snapshot.change_pct
+            ),
+
             open=snapshot.open,
             high=snapshot.high,
             low=snapshot.low,
+
             volume=snapshot.volume,
-            quote_volume=snapshot.quote_volume,
-            event_time=snapshot.event_time,
-            session_date=snapshot.session_date,
-            reference_type=snapshot.reference_type,
-            reference_timezone=snapshot.reference_timezone,
+
+            quote_volume=(
+                snapshot.quote_volume
+            ),
+
+            event_time=(
+                snapshot.event_time
+            ),
+
+            session_date=(
+                snapshot.session_date
+            ),
+
+            reference_type=(
+                snapshot.reference_type
+            ),
+
+            reference_timezone=(
+                snapshot.reference_timezone
+            ),
+
+            # =========================================
+            # Extended Session Prices
+            # =========================================
+
+            regular_price=(
+                snapshot.regular_price
+            ),
+
+            pre_price=(
+                snapshot.pre_price
+            ),
+
+            after_price=(
+                snapshot.after_price
+            ),
+
+            overnight_price=(
+                snapshot.overnight_price
+            ),
+
+            market_session=(
+                snapshot.market_session
+            ),
+            regular_updated_at=(
+                snapshot.regular_updated_at
+            ),
+
+            pre_updated_at=(
+                snapshot.pre_updated_at
+            ),
+
+            after_updated_at=(
+                snapshot.after_updated_at
+            ),
+
+            overnight_updated_at=(
+                snapshot.overnight_updated_at
+            ),
         )
 
         db.add(
@@ -160,7 +231,52 @@ def save_market_quote(
             snapshot.reference_timezone
         )
 
+        # =============================================
+        # Extended Session Prices
+        # =============================================
+
+        quote.regular_price = (
+            snapshot.regular_price
+        )
+
+        quote.pre_price = (
+            snapshot.pre_price
+        )
+
+        quote.after_price = (
+            snapshot.after_price
+        )
+
+        quote.overnight_price = (
+            snapshot.overnight_price
+        )
+
+        quote.market_session = (
+            snapshot.market_session
+        )
+        quote.regular_updated_at = (
+            snapshot.regular_updated_at
+        )
+
+        quote.pre_updated_at = (
+            snapshot.pre_updated_at
+        )
+
+        quote.after_updated_at = (
+            snapshot.after_updated_at
+        )
+
+        quote.overnight_updated_at = (
+            snapshot.overnight_updated_at
+        )
+
     db.commit()
+
+    db.refresh(
+        quote
+    )
+
+    return quote
 
 
 def save_daily_price(
@@ -514,6 +630,284 @@ def load_infoway_korea_assets():
             asset.symbol: asset.id
             for asset in assets
         }
+
+def load_moomoo_assets():
+
+    with SessionLocal() as db:
+
+        assets = db.scalars(
+            select(
+                Asset
+            )
+            .where(
+                Asset.enabled == True,
+                Asset.provider == "MOOMOO",
+            )
+            .order_by(
+                Asset.id
+            )
+        ).all()
+
+        return {
+            asset.id: asset
+            for asset in assets
+        }
+
+def build_moomoo_code(
+    asset,
+):
+
+    if asset.venue == "US":
+
+        return (
+            f"US.{asset.symbol}"
+        )
+
+    if asset.venue == "HKEX":
+
+        return (
+            f"HK.{asset.symbol}"
+        )
+
+    raise ValueError(
+        "Unsupported Moomoo venue: "
+        f"{asset.venue}"
+    )
+
+async def run_moomoo_realtime():
+
+    print()
+    print(
+        "=" * 80
+    )
+
+    print(
+        "Moomoo Dynamic "
+        "Realtime Worker"
+    )
+
+    print(
+        "=" * 80
+    )
+
+    initial_codes = (
+        load_moomoo_codes()
+    )
+
+    if initial_codes:
+
+        print()
+        print(
+            "Initial Moomoo Assets:"
+        )
+
+        for code in sorted(
+            initial_codes
+        ):
+
+            print(
+                f"- {code}"
+            )
+
+    else:
+
+        print()
+        print(
+            "当前没有 Moomoo Asset，"
+            "Worker 将等待动态添加。"
+        )
+
+    provider = (
+        MoomooRealtimeProvider()
+    )
+
+    async for snapshot in (
+        provider
+        .stream_markets_dynamic(
+            code_loader=(
+                load_moomoo_codes
+            ),
+            refresh_seconds=5,
+        )
+    ):
+
+        current_assets = (
+            load_moomoo_assets()
+        )
+
+        asset_id = None
+
+        for (
+            current_asset_id,
+            asset,
+        ) in (
+            current_assets.items()
+        ):
+
+            if (
+                asset.symbol
+                == snapshot.symbol
+                and asset.venue
+                == snapshot.venue
+            ):
+
+                asset_id = (
+                    current_asset_id
+                )
+
+                break
+
+        # Asset 已经被用户停用
+        # 即使队列里还残留行情也不处理
+        if asset_id is None:
+
+            continue
+
+        results = (
+            process_snapshot(
+                asset_id=asset_id,
+                snapshot=snapshot,
+            )
+        )
+
+        print(
+            "[MOOMOO LIVE] "
+            f"{snapshot.venue} | "
+            f"{snapshot.symbol} | "
+            f"{snapshot.price:,.4f} | "
+            f"{snapshot.change_pct:+.2f}%"
+        )
+
+        print_alert_results(
+            symbol=snapshot.symbol,
+            snapshot=snapshot,
+            results=results,
+        )
+
+    assets = (
+        load_moomoo_assets()
+    )
+
+    if not assets:
+
+        print(
+            "没有启用的 Moomoo Asset。"
+        )
+
+        return
+
+    print()
+    print(
+        "=" * 80
+    )
+
+    print(
+        "Moomoo Realtime Worker"
+    )
+
+    print(
+        "=" * 80
+    )
+
+    print()
+
+    code_to_asset_id = {}
+
+    for (
+        asset_id,
+        asset,
+    ) in assets.items():
+
+        code = (
+            build_moomoo_code(
+                asset
+            )
+        )
+
+        code_to_asset_id[
+            code
+        ] = asset_id
+
+        print(
+            f"- {code} "
+            f"(Asset ID={asset_id})"
+        )
+
+    provider = (
+        MoomooRealtimeProvider()
+    )
+
+    async for snapshot in (
+        provider.stream_markets(
+            set(
+                code_to_asset_id.keys()
+            )
+        )
+    ):
+
+        current_assets = (
+            load_moomoo_assets()
+        )
+
+        asset_id = None
+
+        for (
+            current_asset_id,
+            asset,
+        ) in current_assets.items():
+
+            if (
+                asset.symbol
+                == snapshot.symbol
+                and asset.venue
+                == snapshot.venue
+            ):
+
+                asset_id = (
+                    current_asset_id
+                )
+
+                break
+
+        if asset_id is None:
+
+            continue
+
+        results = (
+            process_snapshot(
+                asset_id=asset_id,
+                snapshot=snapshot,
+            )
+        )
+
+        print(
+            "[MOOMOO LIVE] "
+            f"{snapshot.venue} | "
+            f"{snapshot.symbol} | "
+            f"{snapshot.price:,.4f} | "
+            f"{snapshot.change_pct:+.2f}%"
+        )
+
+        print_alert_results(
+            symbol=snapshot.symbol,
+            snapshot=snapshot,
+            results=results,
+        )
+
+def load_moomoo_codes():
+
+    assets = (
+        load_moomoo_assets()
+    )
+
+    return {
+        build_moomoo_code(
+            asset
+        )
+
+        for asset
+        in assets.values()
+    }
 
 
 def print_alert_results(
@@ -1044,10 +1438,9 @@ async def run_krx_polling(
 # =========================================================
 
 async def main():
-
     await asyncio.gather(
         run_binance_batch(),
-        run_infoway_korea(),
+        run_moomoo_realtime(),
     )
 
 async def run_infoway_korea():

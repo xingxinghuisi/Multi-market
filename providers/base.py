@@ -76,6 +76,8 @@ class MarketSnapshot:
 
     quote_volume: float | None
 
+
+
     # =====================================================
     # 时间
     # =====================================================
@@ -112,6 +114,18 @@ class MarketSnapshot:
     # =====================================================
 
     reference_timezone: str
+
+    regular_price: float | None = None
+    pre_price: float | None = None
+    after_price: float | None = None
+    overnight_price: float | None = None
+
+    market_session: str | None = None
+
+    regular_updated_at: datetime | None = None
+    pre_updated_at: datetime | None = None
+    after_updated_at: datetime | None = None
+    overnight_updated_at: datetime | None = None
 
     # =====================================================
     # 转换成普通 dict

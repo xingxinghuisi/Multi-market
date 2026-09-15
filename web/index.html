@@ -2,6 +2,7 @@
 <html lang="zh-CN">
 
 <head>
+
     <meta charset="UTF-8">
 
     <meta
@@ -15,29 +16,119 @@
         rel="stylesheet"
         href="/static/style.css"
     >
+
 </head>
 
 <body>
 
     <main class="container">
 
-        <header>
+        <!-- =========================================
+             Header
+        ========================================== -->
 
-            <h1>
-                Market Radar
-            </h1>
+        <header class="page-header">
 
-            <div id="connection-status">
-                Connecting...
+            <div>
+
+                <h1>
+                    Market Radar
+                </h1>
+
+                <p>
+                    Multi-Market Realtime Monitor
+                </p>
+
+            </div>
+
+            <div
+                id="connection-status"
+                class="connection-offline"
+            >
+                ○ 正在连接
             </div>
 
         </header>
 
-        <section>
+
+        <!-- =========================================
+             添加资产
+        ========================================== -->
+
+        <section class="asset-manager">
 
             <h2>
-                Crypto
+                添加资产
             </h2>
+
+            <form id="asset-form">
+
+                <select
+                    id="asset-market"
+                    required
+                >
+
+                    <option value="US">
+                        美股
+                    </option>
+
+                    <option value="HK">
+                        港股
+                    </option>
+
+                    <option value="CRYPTO">
+                        Crypto
+                    </option>
+
+                </select>
+
+
+                <input
+                    id="asset-symbol"
+                    type="text"
+                    placeholder="代码，例如 NVDA / 1810 / DOGEUSDT"
+                    autocomplete="off"
+                    required
+                >
+
+
+                <input
+                    id="asset-name"
+                    type="text"
+                    placeholder="名称，可选"
+                    autocomplete="off"
+                >
+
+
+                <button type="submit">
+                    添加资产
+                </button>
+
+            </form>
+
+
+            <div id="asset-form-message"></div>
+
+        </section>
+
+
+        <!-- =========================================
+             Crypto
+        ========================================== -->
+
+        <section class="market-section">
+
+            <div class="section-header">
+
+                <h2>
+                    Crypto
+                </h2>
+
+                <span>
+                    Binance
+                </span>
+
+            </div>
 
             <div
                 id="crypto-list"
@@ -46,11 +137,76 @@
 
         </section>
 
-        <section>
 
-            <h2>
-                Korea
-            </h2>
+        <!-- =========================================
+             US Stocks
+        ========================================== -->
+
+        <section class="market-section">
+
+            <div class="section-header">
+
+                <h2>
+                    US Stocks
+                </h2>
+
+                <span>
+                    Moomoo
+                </span>
+
+            </div>
+
+            <div
+                id="us-list"
+                class="market-grid"
+            ></div>
+
+        </section>
+
+
+        <!-- =========================================
+             Hong Kong Stocks
+        ========================================== -->
+
+        <section class="market-section">
+
+            <div class="section-header">
+
+                <h2>
+                    Hong Kong Stocks
+                </h2>
+
+                <span>
+                    Moomoo
+                </span>
+
+            </div>
+
+            <div
+                id="hk-list"
+                class="market-grid"
+            ></div>
+
+        </section>
+
+
+        <!-- =========================================
+             Korea
+        ========================================== -->
+
+        <section class="market-section">
+
+            <div class="section-header">
+
+                <h2>
+                    Korea
+                </h2>
+
+                <span>
+                    Korea Market
+                </span>
+
+            </div>
 
             <div
                 id="krx-list"
@@ -60,6 +216,7 @@
         </section>
 
     </main>
+
 
     <script src="/static/app.js"></script>
 

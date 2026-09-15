@@ -157,3 +157,64 @@ h2 {
 .connection-offline {
     opacity: 0.55;
 }
+
+.asset-manager {
+    margin-bottom: 32px;
+}
+
+#asset-form {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+#asset-form select,
+#asset-form input,
+#asset-form button {
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.15);
+}
+
+#asset-form input {
+    min-width: 220px;
+}
+
+#asset-form-message {
+    margin-top: 10px;
+    font-size: 13px;
+    opacity: 0.8;
+}
+
+.us-session-panel {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.us-current-session {
+    margin-bottom: 10px;
+    font-size: 12px;
+    opacity: 0.7;
+}
+
+.us-session-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.us-session-item {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 12px;
+}
+
+.us-session-item span {
+    opacity: 0.55;
+}
+
+.us-session-item strong {
+    font-weight: 600;
+}

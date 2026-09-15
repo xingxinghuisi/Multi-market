@@ -1,21 +1,56 @@
-const cryptoList = document.getElementById("crypto-list");
-const krxList = document.getElementById("krx-list");
-const connectionStatus = document.getElementById("connection-status");
+const cryptoList =
+    document.getElementById("crypto-list");
+
+const usList =
+    document.getElementById("us-list");
+
+const hkList =
+    document.getElementById("hk-list");
+
+const krxList =
+    document.getElementById("krx-list");
+
+const connectionStatus =
+    document.getElementById("connection-status");
+
+const assetForm =
+    document.getElementById("asset-form");
+
+const assetMarket =
+    document.getElementById("asset-market");
+
+const assetSymbol =
+    document.getElementById("asset-symbol");
+
+const assetName =
+    document.getElementById("asset-name");
+
+const assetFormMessage =
+    document.getElementById("asset-form-message");
+
 
 const marketData = new Map();
 
 
-function formatPrice(asset) {
+// =========================================================
+// Price
+// =========================================================
 
-    const price = Number(asset.price);
+function formatNumber(
+    value,
+    currency,
+) {
 
-    if (!Number.isFinite(price)) {
+    const number =
+        Number(value);
+
+    if (!Number.isFinite(number)) {
         return "--";
     }
 
-    if (asset.currency === "KRW") {
+    if (currency === "KRW") {
 
-        return price.toLocaleString(
+        return number.toLocaleString(
             "zh-CN",
             {
                 maximumFractionDigits: 0,
@@ -23,18 +58,54 @@ function formatPrice(asset) {
         );
     }
 
-    return price.toLocaleString(
+    return number.toLocaleString(
         "zh-CN",
         {
-            maximumFractionDigits: 8,
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 4,
         }
     );
 }
 
 
-function formatChange(changePct) {
+function formatPrice(asset) {
 
-    const value = Number(changePct);
+    return formatNumber(
+        asset.price,
+        asset.currency,
+    );
+}
+
+
+function formatSessionPrice(
+    asset,
+    value,
+) {
+
+    if (
+        value === null ||
+        value === undefined
+    ) {
+        return "--";
+    }
+
+    return formatNumber(
+        value,
+        asset.currency,
+    );
+}
+
+
+// =========================================================
+// Change
+// =========================================================
+
+function formatChange(
+    changePct,
+) {
+
+    const value =
+        Number(changePct);
 
     if (!Number.isFinite(value)) {
         return "--";
@@ -53,9 +124,12 @@ function formatChange(changePct) {
 }
 
 
-function getChangeClass(changePct) {
+function getChangeClass(
+    changePct,
+) {
 
-    const value = Number(changePct);
+    const value =
+        Number(changePct);
 
     if (!Number.isFinite(value)) {
         return "neutral";
@@ -74,32 +148,32 @@ function getChangeClass(changePct) {
 
 
 // =========================================================
-// 数据库 updated_at 当前保存的是 UTC 时间
-//
-// 如果 API 返回：
-// 2026-09-10T06:17:49.869200
-//
-// 浏览器默认可能把它误认为本地时间。
-// 所以没有时区信息时，主动按照 UTC 解析。
+// Time
 // =========================================================
 
-function parseServerTime(value) {
+function parseServerTime(
+    value,
+) {
 
     if (!value) {
         return null;
     }
 
-    let text = String(value);
+    let text =
+        String(value);
 
     const hasTimezone =
         text.endsWith("Z") ||
-        /[+-]\d{2}:\d{2}$/.test(text);
+        /[+-]\d{2}:\d{2}$/.test(
+            text
+        );
 
     if (!hasTimezone) {
         text += "Z";
     }
 
-    const date = new Date(text);
+    const date =
+        new Date(text);
 
     if (
         Number.isNaN(
@@ -113,10 +187,14 @@ function parseServerTime(value) {
 }
 
 
-function formatUpdatedTime(value) {
+function formatUpdatedTime(
+    value,
+) {
 
     const date =
-        parseServerTime(value);
+        parseServerTime(
+            value
+        );
 
     if (!date) {
         return "更新时间未知";
@@ -134,10 +212,14 @@ function formatUpdatedTime(value) {
 }
 
 
-function getAgeSeconds(value) {
+function getAgeSeconds(
+    value,
+) {
 
     const date =
-        parseServerTime(value);
+        parseServerTime(
+            value
+        );
 
     if (!date) {
         return null;
@@ -153,10 +235,14 @@ function getAgeSeconds(value) {
 }
 
 
-function formatAge(value) {
+function formatAge(
+    value,
+) {
 
     const seconds =
-        getAgeSeconds(value);
+        getAgeSeconds(
+            value
+        );
 
     if (seconds === null) {
         return "";
@@ -204,16 +290,12 @@ function formatAge(value) {
 
 
 // =========================================================
-// 判断行情是否“新鲜”
-//
-// Binance：15 秒以内
-// KRX：120 秒以内
-//
-// KRX 某只股票可能短时间没有成交，
-// 所以不能设置得和 Crypto 一样严格。
+// Realtime Status
 // =========================================================
 
-function getRealtimeStatus(asset) {
+function getRealtimeStatus(
+    asset,
+) {
 
     const age =
         getAgeSeconds(
@@ -224,16 +306,25 @@ function getRealtimeStatus(asset) {
 
         return {
             text: "状态未知",
-            className: "status-stale",
+            className:
+                "status-stale",
         };
     }
 
     let threshold = 60;
 
     if (
-        asset.venue === "BINANCE"
+        asset.venue ===
+        "BINANCE"
     ) {
         threshold = 15;
+    }
+
+    if (
+        asset.venue === "US" ||
+        asset.venue === "HKEX"
+    ) {
+        threshold = 30;
     }
 
     if (
@@ -242,40 +333,241 @@ function getRealtimeStatus(asset) {
         threshold = 120;
     }
 
-    if (age <= threshold) {
+    if (
+        age <= threshold
+    ) {
 
         return {
             text: "● 实时",
-            className: "status-live",
+            className:
+                "status-live",
         };
     }
 
     return {
         text: "○ 最近行情",
-        className: "status-stale",
+        className:
+            "status-stale",
     };
 }
 
 
-function getRealtimeSource(asset) {
+// =========================================================
+// US Market Session
+// =========================================================
+
+function getSessionName(
+    session,
+) {
+
+    const names = {
+
+        pre:
+            "盘前",
+
+        regular:
+            "正常盘",
+
+        after:
+            "盘后",
+
+        overnight:
+            "夜盘",
+
+        closed:
+            "休市",
+    };
+
+    return (
+        names[session]
+        || "行情"
+    );
+}
+
+
+function getRealtimeSource(
+    asset,
+) {
 
     if (
-        asset.venue === "BINANCE"
+        asset.venue ===
+        "BINANCE"
     ) {
         return "Binance WebSocket";
     }
 
     if (
-        asset.venue === "KRX"
+        asset.venue === "US" ||
+        asset.venue === "HKEX"
     ) {
-        return "Infoway WebSocket";
+        return "Moomoo OpenD";
+    }
+
+    if (
+        asset.venue ===
+        "KRX"
+    ) {
+        return "Korea Market";
     }
 
     return "Realtime Feed";
 }
 
 
-function renderAsset(asset) {
+// =========================================================
+// Move Card
+// =========================================================
+
+function appendCardToMarket(
+    card,
+    asset,
+) {
+
+    if (
+        asset.venue ===
+        "BINANCE"
+    ) {
+
+        cryptoList.appendChild(
+            card
+        );
+
+        return;
+    }
+
+    if (
+        asset.venue ===
+        "US"
+    ) {
+
+        usList.appendChild(
+            card
+        );
+
+        return;
+    }
+
+    if (
+        asset.venue ===
+        "HKEX"
+    ) {
+
+        hkList.appendChild(
+            card
+        );
+
+        return;
+    }
+
+    if (
+        asset.venue ===
+        "KRX"
+    ) {
+
+        krxList.appendChild(
+            card
+        );
+    }
+}
+
+
+// =========================================================
+// US Extended Session HTML
+// =========================================================
+
+function buildUsSessionHtml(
+    asset,
+) {
+
+    if (
+        asset.venue !== "US"
+    ) {
+        return "";
+    }
+
+    const sessionName =
+        getSessionName(
+            asset.market_session
+        );
+
+    return `
+        <div class="us-session-panel">
+
+            <div class="us-current-session">
+                当前阶段：
+                <strong>
+                    ${sessionName}
+                </strong>
+            </div>
+
+            <div class="us-session-grid">
+
+                <div class="us-session-item">
+                    <span>
+                        收盘
+                    </span>
+
+                    <strong>
+                        ${formatSessionPrice(
+                            asset,
+                            asset.regular_price
+                        )}
+                    </strong>
+                </div>
+
+                <div class="us-session-item">
+                    <span>
+                        盘前
+                    </span>
+
+                    <strong>
+                        ${formatSessionPrice(
+                            asset,
+                            asset.pre_price
+                        )}
+                    </strong>
+                </div>
+
+                <div class="us-session-item">
+                    <span>
+                        盘后
+                    </span>
+
+                    <strong>
+                        ${formatSessionPrice(
+                            asset,
+                            asset.after_price
+                        )}
+                    </strong>
+                </div>
+
+                <div class="us-session-item">
+                    <span>
+                        夜盘
+                    </span>
+
+                    <strong>
+                        ${formatSessionPrice(
+                            asset,
+                            asset.overnight_price
+                        )}
+                    </strong>
+                </div>
+
+            </div>
+
+        </div>
+    `;
+}
+
+
+// =========================================================
+// Render Asset
+// =========================================================
+
+function renderAsset(
+    asset,
+) {
 
     if (
         !asset ||
@@ -307,24 +599,10 @@ function renderAsset(asset) {
         card.className =
             "market-card";
 
-        if (
-            asset.venue ===
-            "BINANCE"
-        ) {
-
-            cryptoList.appendChild(
-                card
-            );
-
-        } else if (
-            asset.venue ===
-            "KRX"
-        ) {
-
-            krxList.appendChild(
-                card
-            );
-        }
+        appendCardToMarket(
+            card,
+            asset,
+        );
     }
 
     const changeClass =
@@ -332,7 +610,7 @@ function renderAsset(asset) {
             asset.change_pct
         );
 
-    const status =
+    const realtimeStatus =
         getRealtimeStatus(
             asset
         );
@@ -347,10 +625,17 @@ function renderAsset(asset) {
             asset
         );
 
+    const sessionHtml =
+        buildUsSessionHtml(
+            asset
+        );
+
     card.innerHTML = `
+
         <div class="market-card-header">
 
             <div>
+
                 <div class="market-symbol">
                     ${asset.symbol}
                 </div>
@@ -358,39 +643,66 @@ function renderAsset(asset) {
                 <div class="market-name">
                     ${asset.name || ""}
                 </div>
+
             </div>
 
-            <span class="market-status ${status.className}">
-                ${status.text}
+            <span
+                class="
+                    market-status
+                    ${realtimeStatus.className}
+                "
+            >
+                ${realtimeStatus.text}
             </span>
 
         </div>
 
+
         <div class="market-price">
+
             ${formatPrice(asset)}
+
             <span class="market-currency">
                 ${asset.currency || ""}
             </span>
+
         </div>
 
+
         <div class="market-change ${changeClass}">
-            ${formatChange(asset.change_pct)}
+            ${formatChange(
+                asset.change_pct
+            )}
         </div>
+
+
+        ${sessionHtml}
+
 
         <div class="market-meta">
             ${source}
         </div>
 
+
         <div class="market-updated">
-            ${formatUpdatedTime(asset.updated_at)}
-            ${ageText ? ` · ${ageText}` : ""}
+
+            ${formatUpdatedTime(
+                asset.updated_at
+            )}
+
+            ${
+                ageText
+                    ? ` · ${ageText}`
+                    : ""
+            }
+
         </div>
     `;
 }
 
 
 // =========================================================
-// 初始 REST 数据
+// REST Initial Load
 // =========================================================
 
 async function loadInitialMarket() {
@@ -433,6 +745,115 @@ async function loadInitialMarket() {
 
 
 // =========================================================
+// Create Asset
+// =========================================================
+
+async function createAsset(
+    market,
+    symbol,
+    name,
+) {
+
+    const response =
+        await fetch(
+            "/api/assets/quick",
+            {
+                method:
+                    "POST",
+
+                headers: {
+                    "Content-Type":
+                        "application/json",
+                },
+
+                body:
+                    JSON.stringify(
+                        {
+                            market,
+                            symbol,
+
+                            name:
+                                name || null,
+                        }
+                    ),
+            }
+        );
+
+    const data =
+        await response.json();
+
+    if (!response.ok) {
+
+        throw new Error(
+            data.detail
+            || "添加失败"
+        );
+    }
+
+    return data;
+}
+
+
+if (assetForm) {
+
+    assetForm.addEventListener(
+        "submit",
+        async event => {
+
+            event.preventDefault();
+
+            const market =
+                assetMarket.value;
+
+            const symbol =
+                assetSymbol
+                .value
+                .trim();
+
+            const name =
+                assetName
+                .value
+                .trim();
+
+            if (!symbol) {
+                return;
+            }
+
+            assetFormMessage
+                .textContent =
+                "正在添加...";
+
+            try {
+
+                const asset =
+                    await createAsset(
+                        market,
+                        symbol,
+                        name,
+                    );
+
+                assetFormMessage
+                    .textContent =
+                    `已添加 ${asset.symbol}`;
+
+                assetSymbol.value =
+                    "";
+
+                assetName.value =
+                    "";
+
+            } catch (error) {
+
+                assetFormMessage
+                    .textContent =
+                    `添加失败：${error.message}`;
+            }
+        }
+    );
+}
+
+
+// =========================================================
 // WebSocket
 // =========================================================
 
@@ -449,18 +870,23 @@ function connectWebSocket() {
             `${protocol}//${window.location.host}/ws/market`
         );
 
+
     ws.onopen = () => {
 
         console.log(
             "WebSocket connected"
         );
 
-        if (connectionStatus) {
+        if (
+            connectionStatus
+        ) {
 
-            connectionStatus.textContent =
+            connectionStatus
+                .textContent =
                 "● 实时连接";
 
-            connectionStatus.className =
+            connectionStatus
+                .className =
                 "connection-live";
         }
     };
@@ -472,6 +898,7 @@ function connectWebSocket() {
             JSON.parse(
                 event.data
             );
+
 
         if (
             message.type ===
@@ -491,14 +918,19 @@ function connectWebSocket() {
             return;
         }
 
+
         if (
             message.type ===
             "market_update"
         ) {
 
+            // 兼容两种后端格式
             renderAsset(
                 message.data
+                || message
             );
+
+            return;
         }
     };
 
@@ -509,12 +941,16 @@ function connectWebSocket() {
             "WebSocket disconnected"
         );
 
-        if (connectionStatus) {
+        if (
+            connectionStatus
+        ) {
 
-            connectionStatus.textContent =
+            connectionStatus
+                .textContent =
                 "○ 正在重新连接";
 
-            connectionStatus.className =
+            connectionStatus
+                .className =
                 "connection-offline";
         }
 
@@ -538,11 +974,7 @@ function connectWebSocket() {
 
 
 // =========================================================
-// 每秒更新一次：
-// “刚刚 / 10 秒前 / 5 分钟前”
-//
-// 即使行情休市没有推送，
-// 状态也会自动从实时变成最近行情。
+// Refresh relative time every second
 // =========================================================
 
 setInterval(
@@ -562,6 +994,10 @@ setInterval(
     1000
 );
 
+
+// =========================================================
+// Start
+// =========================================================
 
 async function start() {
 

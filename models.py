@@ -1,5 +1,6 @@
 from datetime import date, datetime, timezone
 
+
 from sqlalchemy import (
     Boolean,
     Date,
@@ -274,6 +275,26 @@ class AlertState(Base):
 
 class MarketQuote(Base):
 
+    regular_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+
+    pre_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+
+    after_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+
+    overnight_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+
     __tablename__ = "market_quotes"
 
     __table_args__ = (
@@ -382,6 +403,31 @@ class MarketQuote(Base):
         default=utc_now,
         onupdate=utc_now,
         nullable=False,
+    )
+
+    regular_price: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+    )
+
+    pre_price: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+    )
+
+    after_price: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+    )
+
+    overnight_price: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+    )
+
+    market_session: Mapped[str | None] = mapped_column(
+        String(30),
+        nullable=True,
     )
 
 # =========================================================

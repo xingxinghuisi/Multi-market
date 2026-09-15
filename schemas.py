@@ -123,6 +123,25 @@ class AssetCreate(BaseModel):
 
     enabled: bool = True
 
+class AssetQuickCreate(BaseModel):
+
+    market: str = Field(
+        min_length=1,
+        max_length=20,
+    )
+
+    symbol: str = Field(
+        min_length=1,
+        max_length=50,
+    )
+
+    name: str | None = Field(
+        default=None,
+        max_length=200,
+    )
+
+    enabled: bool = True
+
 
 class AssetUpdate(BaseModel):
 

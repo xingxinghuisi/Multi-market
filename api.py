@@ -34,6 +34,7 @@ from schemas import (
     AlertRuleCreate,
     AlertRuleUpdate,
     AssetCreate,
+    AssetQuickCreate,
     AssetUpdate,
 )
 
@@ -258,7 +259,46 @@ def serialize_market_quote(
         "reference_type": quote.reference_type,
         "reference_timezone": quote.reference_timezone,
 
+        "regular_price":
+            quote.regular_price,
+
+        "pre_price":
+            quote.pre_price,
+
+        "after_price":
+            quote.after_price,
+
+        "overnight_price":
+            quote.overnight_price,
+
+        "market_session":
+            quote.market_session,
+
         "updated_at": quote.updated_at,
+
+        "regular_updated_at": (
+            quote.regular_updated_at.isoformat()
+            if quote.regular_updated_at
+            else None
+        ),
+
+        "pre_updated_at": (
+            quote.pre_updated_at.isoformat()
+            if quote.pre_updated_at
+            else None
+        ),
+
+        "after_updated_at": (
+            quote.after_updated_at.isoformat()
+            if quote.after_updated_at
+            else None
+        ),
+
+        "overnight_updated_at": (
+            quote.overnight_updated_at.isoformat()
+            if quote.overnight_updated_at
+            else None
+        ),
     }
 
 def load_realtime_market_quotes():
@@ -327,6 +367,21 @@ def load_realtime_market_quotes():
                     "reference_timezone":
                         quote.reference_timezone,
 
+                    "regular_price":
+                        quote.regular_price,
+
+                    "pre_price":
+                        quote.pre_price,
+
+                    "after_price":
+                        quote.after_price,
+
+                    "overnight_price":
+                        quote.overnight_price,
+
+                    "market_session":
+                        quote.market_session,
+
                     "event_time": (
                         quote.event_time.isoformat()
                         if quote.event_time
@@ -336,6 +391,30 @@ def load_realtime_market_quotes():
                     "updated_at": (
                         quote.updated_at.isoformat()
                         if quote.updated_at
+                        else None
+                    ),
+
+                    "regular_updated_at": (
+                        quote.regular_updated_at.isoformat()
+                        if quote.regular_updated_at
+                        else None
+                    ),
+
+                    "pre_updated_at": (
+                        quote.pre_updated_at.isoformat()
+                        if quote.pre_updated_at
+                        else None
+                    ),
+
+                    "after_updated_at": (
+                        quote.after_updated_at.isoformat()
+                        if quote.after_updated_at
+                        else None
+                    ),
+
+                    "overnight_updated_at": (
+                        quote.overnight_updated_at.isoformat()
+                        if quote.overnight_updated_at
                         else None
                     ),
                 }
@@ -374,6 +453,42 @@ async def market_broadcast_loop():
                     quote["low"],
                     quote["volume"],
                     quote["session_date"],
+
+                    quote.get(
+                        "regular_price"
+                    ),
+
+                    quote.get(
+                        "pre_price"
+                    ),
+
+                    quote.get(
+                        "after_price"
+                    ),
+
+                    quote.get(
+                        "overnight_price"
+                    ),
+
+                    quote.get(
+                        "market_session"
+                    ),
+
+                    quote.get(
+                        "regular_updated_at"
+                    ),
+
+                    quote.get(
+                        "pre_updated_at"
+                    ),
+
+                    quote.get(
+                        "after_updated_at"
+                    ),
+
+                    quote.get(
+                        "overnight_updated_at"
+                    ),
                 )
 
                 previous_version = (
@@ -1039,6 +1154,167 @@ def create_asset(
 
     return serialize_asset(
         asset
+    )
+
+@app.post(
+    "/api/assets/quick",
+    status_code=status.HTTP_201_CREATED,
+)
+def create_asset_quick(
+    payload: AssetQuickCreate,
+    db: Session = Depends(get_db),
+):
+
+    market = (
+        payload.market
+        .strip()
+        .upper()
+    )
+
+    symbol = (
+        payload.symbol
+        .strip()
+        .upper()
+    )
+
+    # =====================================================
+    # Crypto
+    # =====================================================
+
+    if market in {
+        "CRYPTO",
+        "BINANCE",
+    }:
+
+        full_payload = AssetCreate(
+
+            symbol=symbol,
+
+            name=(
+                payload.name.strip()
+                if payload.name
+                else symbol
+            ),
+
+            asset_type="crypto",
+
+            venue="BINANCE",
+
+            segment="SPOT",
+
+            currency="USDT",
+
+            provider="BINANCE",
+
+            enabled=payload.enabled,
+        )
+
+    # =====================================================
+    # US stocks
+    # =====================================================
+
+    elif market in {
+        "US",
+        "USA",
+    }:
+
+        full_payload = AssetCreate(
+
+            symbol=symbol,
+
+            name=(
+                payload.name.strip()
+                if payload.name
+                else symbol
+            ),
+
+            asset_type="stock",
+
+            venue="US",
+
+            # Moomoo 本身使用 US.SYMBOL，
+            # 所以这里无需用户区分 NASDAQ / NYSE。
+            segment="STOCK",
+
+            currency="USD",
+
+            provider="MOOMOO",
+
+            enabled=payload.enabled,
+        )
+
+    # =====================================================
+    # Hong Kong stocks
+    # =====================================================
+
+    elif market in {
+        "HK",
+        "HKEX",
+    }:
+
+        # 700 -> 00700
+        if symbol.isdigit():
+
+            symbol = symbol.zfill(
+                5
+            )
+
+        full_payload = AssetCreate(
+
+            symbol=symbol,
+
+            name=(
+                payload.name.strip()
+                if payload.name
+                else symbol
+            ),
+
+            asset_type="stock",
+
+            venue="HKEX",
+
+            segment="MAIN",
+
+            currency="HKD",
+
+            provider="MOOMOO",
+
+            enabled=payload.enabled,
+        )
+
+    # =====================================================
+    # Korea 暂时不开放用户新增
+    # =====================================================
+
+    elif market in {
+        "KR",
+        "KRX",
+        "KOREA",
+    }:
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Korean realtime provider "
+                "is currently unavailable"
+            ),
+        )
+
+    else:
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Unsupported market. "
+                "Supported: CRYPTO, US, HK"
+            ),
+        )
+
+    # 复用原来的完整创建逻辑：
+    # 标准化、重复检查、数据库提交等
+    return create_asset(
+        payload=full_payload,
+        db=db,
     )
 
 @app.patch(

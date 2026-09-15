@@ -4,6 +4,7 @@ class ProviderRegistry:
         "BINANCE",
         "PYKRX",
         "INFOWAY",
+        "MOOMOO",
     }
 
     def __init__(self):
@@ -74,7 +75,15 @@ class ProviderRegistry:
             provider = (
                 InfowayKoreaProvider()
             )
+        elif name == "MOOMOO":
 
+            from providers.moomoo import (
+                MoomooRealtimeProvider,
+            )
+
+            provider = (
+                MoomooRealtimeProvider()
+            )
         else:
 
             raise ValueError(
