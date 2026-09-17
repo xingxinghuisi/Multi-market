@@ -218,3 +218,22 @@ h2 {
 .us-session-item strong {
     font-weight: 600;
 }
+.us-session-value {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+}
+
+.us-session-time {
+    font-size: 10px;
+    font-weight: 400;
+    opacity: 0.5;
+}
+
+.us-session-label {
+    opacity: 0.6;
+}
+.status-idle {
+    opacity: 0.7;
+}

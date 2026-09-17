@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 from providers.registry import provider_registry
 
@@ -60,6 +61,51 @@ UTC8 = timezone(
 last_heartbeats = {}
 
 
+# =========================================================
+# Database write throttle
+#
+# 每只资产最多每 0.25 秒持久化一次。
+# 实时行情和 Alert Engine 不受影响。
+# =========================================================
+
+DB_WRITE_INTERVAL = 0.25
+
+_last_db_write_at = {}
+
+
+def should_persist_market_data(
+    asset_id,
+):
+
+    now = time.monotonic()
+
+    previous = (
+        _last_db_write_at.get(
+            asset_id
+        )
+    )
+
+    if previous is None:
+
+        _last_db_write_at[
+            asset_id
+        ] = now
+
+        return True
+
+    if (
+        now - previous
+        >= DB_WRITE_INTERVAL
+    ):
+
+        _last_db_write_at[
+            asset_id
+        ] = now
+
+        return True
+
+    return False
+
 def format_rule(
     rule: AlertRule,
 ) -> str:
@@ -70,6 +116,8 @@ def format_rule(
         f"{rule.operator} | "
         f"{rule.value}"
     )
+
+
 
 
 def save_market_quote(
@@ -272,9 +320,7 @@ def save_market_quote(
 
     db.commit()
 
-    db.refresh(
-        quote
-    )
+
 
     return quote
 
@@ -345,7 +391,7 @@ def save_daily_price(
         daily_price.volume = snapshot.volume
         daily_price.change_pct = snapshot.change_pct
 
-    db.commit()
+    db.flush()
 # =========================================================
 # Snapshot
 # ↓
@@ -380,17 +426,22 @@ def process_snapshot(
 
             return []
 
-        save_market_quote(
-            db=db,
-            asset_id=asset.id,
-            snapshot=snapshot,
-        )
+        if should_persist_market_data(
+                asset.id
+        ):
+            save_market_quote(
+                db,
+                asset.id,
+                snapshot,
+            )
 
-        save_daily_price(
-            db=db,
-            asset_id=asset.id,
-            snapshot=snapshot,
-        )
+            save_daily_price(
+                db,
+                asset.id,
+                snapshot,
+            )
+
+            db.commit()
 
         # =================================================
         # 保存最新市场行情

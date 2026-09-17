@@ -211,6 +211,34 @@ function formatUpdatedTime(
     );
 }
 
+function formatSessionTime(
+    value,
+) {
+
+    if (!value) {
+        return "";
+    }
+
+    const date =
+        parseServerTime(
+            value
+        );
+
+    if (!date) {
+        return "";
+    }
+
+    return date.toLocaleTimeString(
+        "zh-CN",
+        {
+            hour12: false,
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+        }
+    );
+}
+
 
 function getAgeSeconds(
     value,
@@ -311,41 +339,92 @@ function getRealtimeStatus(
         };
     }
 
-    let threshold = 60;
 
+    // =============================================
+    // 不同市场使用不同的新鲜度标准
+    // =============================================
+
+    let activeThreshold = 60;
+    let staleThreshold = 300;
+
+
+    // Crypto
     if (
         asset.venue ===
         "BINANCE"
     ) {
-        threshold = 15;
+
+        activeThreshold = 15;
+        staleThreshold = 60;
     }
 
+
+    // US / HK
     if (
         asset.venue === "US" ||
         asset.venue === "HKEX"
     ) {
-        threshold = 30;
+
+        activeThreshold = 30;
+
+        // 3 分钟以内没有新行情，
+        // 不认为连接异常。
+        staleThreshold = 180;
     }
 
+
+    // Korea
     if (
-        asset.venue === "KRX"
+        asset.venue ===
+        "KRX"
     ) {
-        threshold = 120;
+
+        activeThreshold = 120;
+        staleThreshold = 600;
     }
 
+
+    // =============================================
+    // 行情活跃
+    // =============================================
+
     if (
-        age <= threshold
+        age <=
+        activeThreshold
     ) {
 
         return {
-            text: "● 实时",
+            text: "● 行情活跃",
             className:
                 "status-live",
         };
     }
 
+
+    // =============================================
+    // 数据源仍可用，
+    // 但该股票最近没有新价格变化
+    // =============================================
+
+    if (
+        age <=
+        staleThreshold
+    ) {
+
+        return {
+            text: "● 暂无新行情",
+            className:
+                "status-idle",
+        };
+    }
+
+
+    // =============================================
+    // 很久没收到行情
+    // =============================================
+
     return {
-        text: "○ 最近行情",
+        text: "○ 行情较旧",
         className:
             "status-stale",
     };
@@ -490,69 +569,90 @@ function buildUsSessionHtml(
             asset.market_session
         );
 
+
+    function buildSessionItem(
+        label,
+        price,
+        updatedAt,
+    ) {
+
+        const time =
+            formatSessionTime(
+                updatedAt
+            );
+
+        return `
+            <div class="us-session-item">
+
+                <span class="us-session-label">
+                    ${label}
+                </span>
+
+                <div class="us-session-value">
+
+                    <strong>
+                        ${formatSessionPrice(
+                            asset,
+                            price
+                        )}
+                    </strong>
+
+                    ${
+                        time
+                            ? `
+                                <small class="us-session-time">
+                                    ${time}
+                                </small>
+                            `
+                            : ""
+                    }
+
+                </div>
+
+            </div>
+        `;
+    }
+
+
     return `
         <div class="us-session-panel">
 
             <div class="us-current-session">
+
                 当前阶段：
+
                 <strong>
                     ${sessionName}
                 </strong>
+
             </div>
+
 
             <div class="us-session-grid">
 
-                <div class="us-session-item">
-                    <span>
-                        收盘
-                    </span>
+                ${buildSessionItem(
+                    "收盘",
+                    asset.regular_price,
+                    asset.regular_updated_at
+                )}
 
-                    <strong>
-                        ${formatSessionPrice(
-                            asset,
-                            asset.regular_price
-                        )}
-                    </strong>
-                </div>
+                ${buildSessionItem(
+                    "盘前",
+                    asset.pre_price,
+                    asset.pre_updated_at
+                )}
 
-                <div class="us-session-item">
-                    <span>
-                        盘前
-                    </span>
+                ${buildSessionItem(
+                    "盘后",
+                    asset.after_price,
+                    asset.after_updated_at
+                )}
 
-                    <strong>
-                        ${formatSessionPrice(
-                            asset,
-                            asset.pre_price
-                        )}
-                    </strong>
-                </div>
-
-                <div class="us-session-item">
-                    <span>
-                        盘后
-                    </span>
-
-                    <strong>
-                        ${formatSessionPrice(
-                            asset,
-                            asset.after_price
-                        )}
-                    </strong>
-                </div>
-
-                <div class="us-session-item">
-                    <span>
-                        夜盘
-                    </span>
-
-                    <strong>
-                        ${formatSessionPrice(
-                            asset,
-                            asset.overnight_price
-                        )}
-                    </strong>
-                </div>
+                ${buildSessionItem(
+                    "夜盘",
+                    asset.overnight_price,
+                    asset.overnight_updated_at
+                )}
 
             </div>
 
