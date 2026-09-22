@@ -22,6 +22,117 @@ def build_alert_message(
     # 方向
     # =====================================================
 
+    # =====================================================
+    # Step Alert
+    # =====================================================
+
+    if rule.operator == "step":
+
+        direction = result.get(
+            "direction"
+        )
+
+        step_size = float(
+            result.get(
+                "step_size",
+                rule.value,
+            )
+        )
+
+        step_count = int(
+            result.get(
+                "step_count",
+                1,
+            )
+        )
+
+        anchor_before = float(
+            result.get(
+                "anchor_before"
+            )
+        )
+
+        anchor_after = float(
+            result.get(
+                "anchor_after"
+            )
+        )
+
+        current_value = float(
+            result.get(
+                "current_value",
+                snapshot.price,
+            )
+        )
+
+        currency = (
+            asset.currency
+            or ""
+        )
+
+        if direction == "up":
+
+            direction_text = (
+                "步进上涨"
+            )
+
+            direction_icon = "📈"
+
+        else:
+
+            direction_text = (
+                "步进下跌"
+            )
+
+            direction_icon = "📉"
+
+
+        next_up = (
+            anchor_after
+            + step_size
+        )
+
+        next_down = (
+            anchor_after
+            - step_size
+        )
+
+
+        message = (
+            "🚨 Market Radar\n\n"
+
+            f"{direction_icon} "
+            f"{asset.symbol} "
+            f"{direction_text}\n\n"
+
+            f"当前价格："
+            f"{current_value:,.2f} "
+            f"{currency}\n"
+
+            f"步长："
+            f"{step_size:,.2f} "
+            f"{currency}\n"
+
+            f"本次跨越："
+            f"{step_count} 档\n\n"
+
+            f"原锚点："
+            f"{anchor_before:,.2f}\n"
+
+            f"新锚点："
+            f"{anchor_after:,.2f}\n\n"
+
+            f"↑ 下一上涨提醒："
+            f"{next_up:,.2f}\n"
+
+            f"↓ 下一下跌提醒："
+            f"{next_down:,.2f}\n\n"
+
+            f"Rule #{rule.id}"
+        )
+
+        return message
+
     if rule.operator == "crossing_up":
 
         action_text = "向上突破"
@@ -211,9 +322,16 @@ def send_alert_notification(
 
     try:
 
-        send_telegram_message(
-            message
+        telegram_sent = (
+            send_telegram_message(
+                message
+            )
         )
+
+        if not telegram_sent:
+            raise RuntimeError(
+                "Telegram message send failed"
+            )
 
         notification.status = (
             "sent"

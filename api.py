@@ -1,4 +1,18 @@
 import asyncio
+import json
+import os
+import time
+
+from providers.moomoo import (
+    MoomooRealtimeProvider,
+)
+
+from urllib.request import (
+    ProxyHandler,
+    Request,
+    build_opener,
+    urlopen,
+)
 from contextlib import suppress
 
 from pathlib import Path
@@ -23,6 +37,7 @@ from datetime import date
 
 from database import SessionLocal
 from models import (
+    Notification,
     DailyPrice,
     AlertRule,
     AlertState,
@@ -191,6 +206,362 @@ def get_db():
 # =========================================================
 # Helpers
 # =========================================================
+
+# =========================================================
+# Asset Search Cache
+# =========================================================
+
+_binance_asset_catalog_cache = {
+    "loaded_at": 0.0,
+    "data": [],
+}
+
+BINANCE_ASSET_CATALOG_TTL = 300
+
+_moomoo_asset_catalog_cache = {
+    "US": {
+        "loaded_at": 0.0,
+        "data": [],
+    },
+
+    "HK": {
+        "loaded_at": 0.0,
+        "data": [],
+    },
+}
+
+MOOMOO_ASSET_CATALOG_TTL = 300
+
+
+def load_moomoo_asset_catalog(
+    market: str,
+):
+
+    market = (
+        market.strip()
+        .upper()
+    )
+
+    cache_key = (
+        "HK"
+        if market in {
+            "HK",
+            "HKEX",
+        }
+        else
+        market
+    )
+
+    if cache_key not in (
+        _moomoo_asset_catalog_cache
+    ):
+
+        raise ValueError(
+            f"Unsupported market: "
+            f"{market}"
+        )
+
+    now = time.monotonic()
+
+    cache = (
+        _moomoo_asset_catalog_cache[
+            cache_key
+        ]
+    )
+
+    if (
+        cache["data"]
+        and
+        now - cache["loaded_at"]
+        < MOOMOO_ASSET_CATALOG_TTL
+    ):
+
+        return cache["data"]
+
+    provider = (
+        MoomooRealtimeProvider()
+    )
+
+    data = (
+        provider.load_stock_catalog(
+            cache_key
+        )
+    )
+
+    cache["loaded_at"] = now
+    cache["data"] = data
+
+    return data
+
+
+def _binance_read_json(
+    url: str,
+):
+
+
+    request = Request(
+        url,
+        headers={
+            "User-Agent":
+                "Market-Radar/1.0",
+        },
+    )
+
+    proxy_url = os.getenv(
+        "BINANCE_PROXY_URL"
+    )
+
+    if proxy_url:
+
+        opener = build_opener(
+            ProxyHandler(
+                {
+                    "http":
+                        proxy_url,
+
+                    "https":
+                        proxy_url,
+                }
+            )
+        )
+
+        with opener.open(
+            request,
+            timeout=15,
+        ) as response:
+
+            return json.loads(
+                response
+                .read()
+                .decode("utf-8")
+            )
+
+    with urlopen(
+        request,
+        timeout=15,
+    ) as response:
+
+        return json.loads(
+            response
+            .read()
+            .decode("utf-8")
+        )
+
+
+def load_binance_asset_catalog():
+
+    now = time.monotonic()
+
+    cached_data = (
+        _binance_asset_catalog_cache[
+            "data"
+        ]
+    )
+
+    loaded_at = (
+        _binance_asset_catalog_cache[
+            "loaded_at"
+        ]
+    )
+
+    if (
+        cached_data
+        and
+        now - loaded_at
+        < BINANCE_ASSET_CATALOG_TTL
+    ):
+
+        return cached_data
+
+    results = []
+
+    # =====================================================
+    # Binance Spot
+    # =====================================================
+
+    spot_data = _binance_read_json(
+        "https://api.binance.com"
+        "/api/v3/exchangeInfo"
+    )
+
+    for item in spot_data.get(
+        "symbols",
+        [],
+    ):
+
+        if (
+            item.get("status")
+            != "TRADING"
+        ):
+
+            continue
+
+        symbol = item.get(
+            "symbol",
+            "",
+        ).upper()
+
+        base_asset = item.get(
+            "baseAsset",
+            "",
+        ).upper()
+
+        quote_asset = item.get(
+            "quoteAsset",
+            "",
+        ).upper()
+
+        # 当前 Market Radar
+        # Crypto 主要监控 USDT 交易对
+        if quote_asset != "USDT":
+
+            continue
+
+        results.append(
+            {
+                "market":
+                    "CRYPTO",
+
+                "symbol":
+                    symbol,
+
+                "name":
+                    (
+                        f"{base_asset} / "
+                        f"{quote_asset}"
+                    ),
+
+                "asset_type":
+                    "crypto",
+
+                "venue":
+                    "BINANCE",
+
+                "segment":
+                    "SPOT",
+
+                "currency":
+                    quote_asset,
+
+                "provider":
+                    "BINANCE",
+
+                "instrument_type":
+                    "spot",
+
+                "display_label":
+                    (
+                        f"{symbol} · "
+                        f"Binance 现货"
+                    ),
+            }
+        )
+
+    # =====================================================
+    # Binance USD-M Futures
+    # =====================================================
+
+    futures_data = _binance_read_json(
+        "https://fapi.binance.com"
+        "/fapi/v1/exchangeInfo"
+    )
+
+    for item in futures_data.get(
+        "symbols",
+        [],
+    ):
+
+        if (
+            item.get("status")
+            != "TRADING"
+        ):
+
+            continue
+
+        contract_type = (
+            item.get(
+                "contractType",
+                ""
+            )
+            .strip()
+            .upper()
+        )
+
+        if contract_type not in {
+            "PERPETUAL",
+            "TRADIFI_PERPETUAL",
+        }:
+            continue
+
+        symbol = item.get(
+            "symbol",
+            "",
+        ).upper()
+
+        base_asset = item.get(
+            "baseAsset",
+            "",
+        ).upper()
+
+        quote_asset = item.get(
+            "quoteAsset",
+            "",
+        ).upper()
+
+        if quote_asset != "USDT":
+
+            continue
+
+        results.append(
+            {
+                "market":
+                    "CRYPTO",
+
+                "symbol":
+                    symbol,
+
+                "name":
+                    (
+                        f"{base_asset} / "
+                        f"{quote_asset}"
+                    ),
+
+                "asset_type":
+                    "crypto",
+
+                "venue":
+                    "BINANCE",
+
+                "segment":
+                    "FUTURES",
+
+                "currency":
+                    quote_asset,
+
+                "provider":
+                    "BINANCE",
+
+                "instrument_type":
+                    "perpetual",
+
+                "display_label":
+                    (
+                        f"{symbol} · "
+                        f"Binance 永续"
+                    ),
+            }
+        )
+
+    _binance_asset_catalog_cache[
+        "loaded_at"
+    ] = now
+
+    _binance_asset_catalog_cache[
+        "data"
+    ] = results
+
+    return results
+
 
 def get_default_user(
     db: Session,
@@ -698,6 +1069,43 @@ def health():
 # Assets
 # =========================================================
 
+
+@app.get("/api/disabled-assets")
+def get_disabled_assets(
+    db: Session = Depends(get_db),
+):
+
+    assets = db.scalars(
+        select(
+            Asset
+        )
+        .where(
+            Asset.enabled.is_(False)
+        )
+        .order_by(
+            Asset.venue,
+            Asset.symbol,
+        )
+    ).all()
+
+    return [
+        {
+            "asset_id": asset.id,
+            "symbol": asset.symbol,
+            "name": asset.name,
+            "asset_type": asset.asset_type,
+            "venue": asset.venue,
+            "segment": asset.segment,
+            "currency": asset.currency,
+            "provider": asset.provider,
+            "enabled": asset.enabled,
+        }
+
+        for asset
+        in assets
+    ]
+
+
 @app.get("/api/assets")
 def get_assets(
     symbol: str | None = None,
@@ -756,6 +1164,218 @@ def get_assets(
         }
         for asset in assets
     ]
+
+@app.get(
+    "/api/assets/search"
+)
+def search_assets(
+    q: str,
+    market: str = "CRYPTO",
+):
+
+    query = (
+        q.strip()
+        .upper()
+    )
+
+    selected_market = (
+        market.strip()
+        .upper()
+    )
+
+    if len(query) < 1:
+
+        return {
+            "count": 0,
+            "data": [],
+        }
+
+    try:
+
+        if selected_market in {
+            "CRYPTO",
+            "BINANCE",
+        }:
+
+            catalog = (
+                load_binance_asset_catalog()
+            )
+
+
+        elif selected_market in {
+
+            "US",
+
+            "USA",
+
+        }:
+
+            provider = (
+
+                MoomooRealtimeProvider()
+
+            )
+
+            matched = (
+
+                provider
+
+                .search_stock_assets(
+
+                    "US",
+
+                    query,
+
+                    20,
+
+                )
+
+            )
+
+            return {
+
+                "count":
+
+                    len(matched),
+
+                "data":
+
+                    matched,
+
+            }
+
+
+        elif selected_market in {
+
+            "HK",
+
+            "HKEX",
+
+        }:
+
+            provider = (
+
+                MoomooRealtimeProvider()
+
+            )
+
+            matched = (
+
+                provider
+
+                .search_stock_assets(
+
+                    "HK",
+
+                    query,
+
+                    20,
+
+                )
+
+            )
+
+            return {
+
+                "count":
+
+                    len(matched),
+
+                "data":
+
+                    matched,
+
+            }
+
+        else:
+
+            return {
+                "count": 0,
+                "data": [],
+            }
+
+    except Exception as error:
+
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Asset search failed: "
+                f"{error}"
+            ),
+        )
+
+    except Exception as error:
+
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Binance asset search "
+                f"failed: {error}"
+            ),
+        )
+
+    matched = []
+
+    for item in catalog:
+
+        symbol = (
+            item["symbol"]
+        )
+
+        name = (
+            item["name"]
+        )
+
+        if (
+            query in symbol
+            or
+            query in name.upper()
+        ):
+
+            matched.append(
+                item
+            )
+
+    # 完全匹配优先，
+    # 其次 symbol 前缀，
+    # 最后普通包含
+    matched.sort(
+        key=lambda item: (
+            0
+            if item["symbol"] == query
+            else
+            1
+            if item["symbol"].startswith(
+                query
+            )
+            else
+            2,
+
+            len(
+                item["symbol"]
+            ),
+
+            item["symbol"],
+
+            0
+            if item["segment"] in {
+                "SPOT",
+                "STOCK",
+            }
+            else
+            1
+        )
+    )
+
+    matched = matched[:20]
+
+    return {
+        "count": len(
+            matched
+        ),
+        "data": matched,
+    }
+
 
 @app.get(
     "/api/assets/{asset_id}"
@@ -1098,14 +1718,40 @@ def create_asset(
 
     if existing:
 
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "Asset already exists: "
-                f"{venue}/"
-                f"{segment}/"
-                f"{symbol}"
-            ),
+        # =====================================================
+        # 已存在并且仍然启用
+        # =====================================================
+
+        if existing.enabled:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Asset already exists: "
+                    f"{venue}/"
+                    f"{segment}/"
+                    f"{symbol}"
+                ),
+            )
+
+        # =====================================================
+        # 已经被软删除
+        # 直接恢复原 Asset
+        # =====================================================
+
+        existing.name = name
+        existing.asset_type = asset_type
+        existing.currency = currency
+        existing.provider = provider
+        existing.enabled = True
+
+        db.commit()
+
+        db.refresh(
+            existing
+        )
+
+        return serialize_asset(
+            existing
         )
 
     # =====================================================
@@ -1186,6 +1832,143 @@ def create_asset_quick(
         "BINANCE",
     }:
 
+        # =============================================
+        # 读取 Binance 当前真实产品目录
+        # =============================================
+
+        try:
+
+            catalog = (
+                load_binance_asset_catalog()
+            )
+
+        except Exception as error:
+
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Failed to load "
+                    "Binance asset catalog: "
+                    f"{error}"
+                ),
+            )
+
+        # =============================================
+        # segment
+        #
+        # 搜索结果点击时：
+        # SPOT / FUTURES 会一起提交
+        # =============================================
+
+        segment = None
+
+        if payload.segment:
+
+            segment = (
+                payload.segment
+                .strip()
+                .upper()
+            )
+
+            if segment not in {
+                "SPOT",
+                "FUTURES",
+            }:
+
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Unsupported Binance "
+                        "segment"
+                    ),
+                )
+
+        # =============================================
+        # 找到 Binance 中匹配的产品
+        # =============================================
+
+        matches = [
+            item
+
+            for item
+            in catalog
+
+            if (
+                item["symbol"]
+                == symbol
+                and
+                (
+                    segment is None
+                    or
+                    item["segment"]
+                    == segment
+                )
+            )
+        ]
+
+        if not matches:
+
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Binance product "
+                    "not found: "
+                    f"{symbol}"
+                    + (
+                        f" / {segment}"
+                        if segment
+                        else ""
+                    )
+                ),
+            )
+
+        # =============================================
+        # 没传 segment 时
+        #
+        # 如果同一个 symbol 同时有
+        # Spot + Futures
+        # 必须让用户从搜索结果中选择
+        # =============================================
+
+        if segment is None:
+
+            available_segments = {
+                item["segment"]
+                for item
+                in matches
+            }
+
+            if (
+                len(
+                    available_segments
+                )
+                > 1
+            ):
+
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"{symbol} exists in "
+                        "multiple Binance products. "
+                        "Please select Spot "
+                        "or Futures."
+                    ),
+                )
+
+            segment = (
+                matches[0][
+                    "segment"
+                ]
+            )
+
+        selected_product = (
+            matches[0]
+        )
+
+        # =============================================
+        # 创建 Asset
+        # =============================================
+
         full_payload = AssetCreate(
 
             symbol=symbol,
@@ -1193,16 +1976,23 @@ def create_asset_quick(
             name=(
                 payload.name.strip()
                 if payload.name
-                else symbol
+                else
+                selected_product[
+                    "name"
+                ]
             ),
 
             asset_type="crypto",
 
             venue="BINANCE",
 
-            segment="SPOT",
+            segment=segment,
 
-            currency="USDT",
+            currency=(
+                selected_product[
+                    "currency"
+                ]
+            ),
 
             provider="BINANCE",
 
@@ -1214,33 +2004,161 @@ def create_asset_quick(
     # =====================================================
 
     elif market in {
+
         "US",
+
         "USA",
+
     }:
+
+        # =============================================
+
+        # 使用 Moomoo 验证真实美股代码
+
+        # =============================================
+
+        try:
+
+            provider = (
+
+                MoomooRealtimeProvider()
+
+            )
+
+            matches = (
+
+                provider
+
+                .search_stock_assets(
+
+                    "US",
+
+                    symbol,
+
+                    20,
+
+                )
+
+            )
+
+
+        except Exception as error:
+
+            raise HTTPException(
+
+                status_code=502,
+
+                detail=(
+
+                    "Moomoo asset validation "
+
+                    f"failed: {error}"
+
+                ),
+
+            )
+
+        selected_product = next(
+
+            (
+
+                item
+
+                for item in matches
+
+                if item["symbol"] == symbol
+
+            ),
+
+            None,
+
+        )
+
+        if selected_product is None:
+            raise HTTPException(
+
+                status_code=400,
+
+                detail=(
+
+                    "US stock not found: "
+
+                    f"{symbol}"
+
+                ),
+
+            )
 
         full_payload = AssetCreate(
 
-            symbol=symbol,
+            symbol=
+
+            selected_product[
+
+                "symbol"
+
+            ],
 
             name=(
+
                 payload.name.strip()
+
                 if payload.name
-                else symbol
+
+                else
+
+                selected_product[
+
+                    "name"
+
+                ]
+
             ),
 
-            asset_type="stock",
+            asset_type=
 
-            venue="US",
+            selected_product[
 
-            # Moomoo 本身使用 US.SYMBOL，
-            # 所以这里无需用户区分 NASDAQ / NYSE。
-            segment="STOCK",
+                "asset_type"
 
-            currency="USD",
+            ],
 
-            provider="MOOMOO",
+            venue=
 
-            enabled=payload.enabled,
+            selected_product[
+
+                "venue"
+
+            ],
+
+            segment=
+
+            selected_product[
+
+                "segment"
+
+            ],
+
+            currency=
+
+            selected_product[
+
+                "currency"
+
+            ],
+
+            provider=
+
+            selected_product[
+
+                "provider"
+
+            ],
+
+            enabled=
+
+            payload.enabled,
+
         )
 
     # =====================================================
@@ -1248,38 +2166,176 @@ def create_asset_quick(
     # =====================================================
 
     elif market in {
+
         "HK",
+
         "HKEX",
+
     }:
 
         # 700 -> 00700
-        if symbol.isdigit():
 
-            symbol = symbol.zfill(
-                5
+        if symbol.isdigit():
+            symbol = (
+
+                symbol.zfill(5)
+
+            )
+
+        # =============================================
+
+        # 使用 Moomoo 验证真实港股代码
+
+        # =============================================
+
+        try:
+
+            provider = (
+
+                MoomooRealtimeProvider()
+
+            )
+
+            matches = (
+
+                provider
+
+                .search_stock_assets(
+
+                    "HK",
+
+                    symbol,
+
+                    20,
+
+                )
+
+            )
+
+
+        except Exception as error:
+
+            raise HTTPException(
+
+                status_code=502,
+
+                detail=(
+
+                    "Moomoo asset validation "
+
+                    f"failed: {error}"
+
+                ),
+
+            )
+
+        selected_product = next(
+
+            (
+
+                item
+
+                for item in matches
+
+                if (
+
+                    item["symbol"]
+
+                    == symbol
+
+            )
+
+            ),
+
+            None,
+
+        )
+
+        if selected_product is None:
+            raise HTTPException(
+
+                status_code=400,
+
+                detail=(
+
+                    "HK stock not found: "
+
+                    f"{symbol}"
+
+                ),
+
             )
 
         full_payload = AssetCreate(
 
-            symbol=symbol,
+            symbol=
+
+            selected_product[
+
+                "symbol"
+
+            ],
 
             name=(
+
                 payload.name.strip()
+
                 if payload.name
-                else symbol
+
+                else
+
+                selected_product[
+
+                    "name"
+
+                ]
+
             ),
 
-            asset_type="stock",
+            asset_type=
 
-            venue="HKEX",
+            selected_product[
 
-            segment="MAIN",
+                "asset_type"
 
-            currency="HKD",
+            ],
 
-            provider="MOOMOO",
+            venue=
 
-            enabled=payload.enabled,
+            selected_product[
+
+                "venue"
+
+            ],
+
+            segment=
+
+            selected_product[
+
+                "segment"
+
+            ],
+
+            currency=
+
+            selected_product[
+
+                "currency"
+
+            ],
+
+            provider=
+
+            selected_product[
+
+                "provider"
+
+            ],
+
+            enabled=
+
+            payload.enabled,
+
         )
 
     # =====================================================
@@ -1757,17 +2813,66 @@ def delete_alert_rule(
         rule_id,
     )
 
-    # 删除关联 AlertState
+    # =====================================================
+    # 1. 先停用规则
+    #
+    # 防止 Worker 在删除过程中继续触发新 Notification
+    # =====================================================
+
+    rule.enabled = False
+
+    db.flush()
+
+
+    # =====================================================
+    # 2. 保留历史 Notification
+    #
+    # 只解除 Notification -> AlertRule 外键
+    # =====================================================
+
+    notifications = db.scalars(
+        select(
+            Notification
+        ).where(
+            Notification.rule_id
+            == rule.id
+        )
+    ).all()
+
+    for notification in notifications:
+
+        notification.rule_id = None
+
+    # 关键：
+    # 先真正 UPDATE 数据库，
+    # 再继续删除 AlertRule
+    db.flush()
+
+
+    # =====================================================
+    # 3. 删除 AlertState
+    # =====================================================
+
     reset_alert_state(
         db,
         rule.id,
     )
+
+    # 关键：
+    # 先真正 DELETE AlertState
+    db.flush()
+
+
+    # =====================================================
+    # 4. 删除 AlertRule
+    # =====================================================
 
     db.delete(
         rule
     )
 
     db.commit()
+
 
     return {
         "deleted": True,

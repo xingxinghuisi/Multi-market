@@ -11,6 +11,8 @@ from moomoo import (
     RET_OK,
     StockQuoteHandlerBase,
     SubType,
+    Market,
+    SecurityType,
 )
 
 from providers.base import MarketSnapshot
@@ -155,6 +157,356 @@ class MoomooRealtimeProvider:
 
         # 各交易阶段最后一次观察到价格变化的时间
         self._session_price_state = {}
+
+    # =====================================================
+    # Static Asset Catalog
+    # =====================================================
+
+    # =====================================================
+    # Static Asset Catalog
+    # =====================================================
+
+    def load_stock_catalog(
+        self,
+        market_code: str,
+    ):
+
+        market_code = (
+            market_code
+            .strip()
+            .upper()
+        )
+
+        if market_code == "US":
+
+            moomoo_market = Market.US
+            venue = "US"
+            currency = "USD"
+
+        elif market_code in {
+            "HK",
+            "HKEX",
+        }:
+
+            moomoo_market = Market.HK
+            venue = "HKEX"
+            currency = "HKD"
+
+        else:
+
+            raise ValueError(
+                f"Unsupported market: "
+                f"{market_code}"
+            )
+
+        quote_ctx = (
+            OpenQuoteContext(
+                host=self.host,
+                port=self.port,
+            )
+        )
+
+        try:
+
+            ret, data = (
+                quote_ctx
+                .get_stock_basicinfo(
+                    moomoo_market,
+                    SecurityType.STOCK,
+                )
+            )
+
+            if ret != RET_OK:
+
+                raise RuntimeError(
+                    str(data)
+                )
+
+            results = []
+
+            for _, row in (
+                data.iterrows()
+            ):
+
+                code = str(
+                    row.get(
+                        "code",
+                        "",
+                    )
+                ).strip()
+
+                name = str(
+                    row.get(
+                        "name",
+                        "",
+                    )
+                ).strip()
+
+                if not code:
+                    continue
+
+                if "." in code:
+
+                    symbol = (
+                        code.split(
+                            ".",
+                            1,
+                        )[1]
+                    )
+
+                else:
+
+                    symbol = code
+
+                delisting = row.get(
+                    "delisting",
+                    False,
+                )
+
+                if bool(delisting):
+                    continue
+
+                results.append(
+                    {
+                        "market":
+                            market_code,
+
+                        "symbol":
+                            symbol.upper(),
+
+                        "name":
+                            name
+                            or symbol.upper(),
+
+                        "asset_type":
+    "stock",
+
+"venue":
+    venue,
+
+"segment":
+    "STOCK",
+
+                        "currency":
+                            currency,
+
+                        "provider":
+                            "MOOMOO",
+
+                        "instrument_type":
+                            "stock",
+
+                        "display_label":
+                            (
+                                f"{symbol.upper()} · "
+                                f"{name}"
+                            ),
+                    }
+                )
+
+            return results
+
+        finally:
+
+            quote_ctx.close()
+
+
+    # =====================================================
+    # Stock Search
+    # =====================================================
+
+    def search_stock_assets(
+        self,
+        market_code: str,
+        keyword: str,
+        limit: int = 20,
+    ):
+
+        market_code = (
+            market_code
+            .strip()
+            .upper()
+        )
+
+        keyword = (
+            keyword
+            .strip()
+        )
+
+        if not keyword:
+            return []
+
+        if market_code in {
+            "US",
+            "USA",
+        }:
+
+            target_market = "US"
+            venue = "US"
+            currency = "USD"
+
+        elif market_code in {
+            "HK",
+            "HKEX",
+        }:
+
+            target_market = "HK"
+            venue = "HKEX"
+            currency = "HKD"
+
+        else:
+
+            raise ValueError(
+                f"Unsupported market: "
+                f"{market_code}"
+            )
+
+        quote_ctx = (
+            OpenQuoteContext(
+                host=self.host,
+                port=self.port,
+            )
+        )
+
+        try:
+
+            ret, data = (
+                quote_ctx
+                .get_search_quote(
+                    keyword,
+                    limit,
+                )
+            )
+
+            if ret != RET_OK:
+
+                raise RuntimeError(
+                    str(data)
+                )
+
+            results = []
+
+            for _, row in (
+                data.iterrows()
+            ):
+
+                row_market = str(
+                    row.get(
+                        "market",
+                        "",
+                    )
+                ).strip().upper()
+
+                sec_type = str(
+                    row.get(
+                        "sec_type",
+                        "",
+                    )
+                ).strip().upper()
+
+                if (
+                    row_market
+                    != target_market
+                ):
+                    continue
+
+                if sec_type not in {
+                    "STOCK",
+                    "ETF",
+                }:
+                    continue
+
+                code = str(
+                    row.get(
+                        "code",
+                        "",
+                    )
+                ).strip()
+
+                name = str(
+                    row.get(
+                        "name",
+                        "",
+                    )
+                ).strip()
+
+                if not code:
+                    continue
+
+                if "." in code:
+
+                    symbol = (
+                        code.split(
+                            ".",
+                            1,
+                        )[1]
+                    )
+
+                else:
+
+                    symbol = code
+
+                symbol = (
+                    symbol
+                    .strip()
+                    .upper()
+                )
+
+                results.append(
+                    {
+                        "market":
+                            target_market,
+
+                        "symbol":
+                            symbol,
+
+                        "name":
+                            name
+                            or symbol,
+
+                        "asset_type":
+    (
+        "etf"
+        if sec_type == "ETF"
+        else "stock"
+    ),
+
+"venue":
+    venue,
+
+"segment":
+    (
+        "ETF"
+        if sec_type == "ETF"
+        else "STOCK"
+    ),
+
+                        "currency":
+                            currency,
+
+                        "provider":
+                            "MOOMOO",
+
+                        "instrument_type":
+    (
+        "etf"
+        if sec_type == "ETF"
+        else "stock"
+    ),
+
+                        "display_label":
+                            (
+                                f"{symbol} · "
+                                f"{name}"
+                            ),
+                    }
+                )
+
+            return results
+
+        finally:
+
+            quote_ctx.close()
 
     # =====================================================
     # 通用工具

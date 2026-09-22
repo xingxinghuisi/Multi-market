@@ -9,6 +9,10 @@ from providers.moomoo import (
     MoomooRealtimeProvider,
 )
 
+from providers.binance_futures import (
+    BinanceFuturesProvider,
+)
+
 from datetime import (
     date,
     datetime,
@@ -443,15 +447,7 @@ def process_snapshot(
 
             db.commit()
 
-        # =================================================
-        # 保存最新市场行情
-        # =================================================
 
-        save_market_quote(
-            db=db,
-            asset_id=asset.id,
-            snapshot=snapshot,
-        )
 
         symbol = (
             asset.symbol
@@ -585,11 +581,13 @@ def process_snapshot(
 # 数据库加载 Binance Assets
 # =========================================================
 
-def load_binance_assets():
+def load_binance_assets(
+    segment: str | None = None,
+):
 
     with SessionLocal() as db:
 
-        assets = db.scalars(
+        statement = (
             select(
                 Asset
             )
@@ -600,33 +598,49 @@ def load_binance_assets():
                 Asset.provider
                 == "BINANCE",
             )
-            .order_by(
+        )
+
+        if segment is not None:
+
+            statement = (
+                statement.where(
+                    Asset.segment
+                    == segment
+                )
+            )
+
+        assets = db.scalars(
+            statement.order_by(
                 Asset.id
             )
         ).all()
 
         return {
-            asset.symbol: (
-                asset.id
-            )
+            asset.symbol: asset.id
 
             for asset
             in assets
         }
 
-def load_binance_symbols():
-    """
-    Provider 每隔几秒调用一次。
-
-    只返回当前数据库中：
-    - enabled = true
-    - provider = BINANCE
-
-    的 Symbol。
-    """
+def load_binance_spot_symbols():
 
     assets = (
-        load_binance_assets()
+        load_binance_assets(
+            segment="SPOT"
+        )
+    )
+
+    return list(
+        assets.keys()
+    )
+
+
+def load_binance_futures_symbols():
+
+    assets = (
+        load_binance_assets(
+            segment="FUTURES"
+        )
     )
 
     return list(
@@ -1195,44 +1209,30 @@ def print_heartbeat(
 
 async def run_binance_batch():
 
-    assets = (
-        load_binance_assets()
+    assets = load_binance_assets(
+        segment="SPOT"
     )
 
     if not assets:
 
         print(
-            "没有 Binance Asset。"
+            "没有 Binance Spot Asset。"
         )
 
         return
 
-    symbols = list(
-        assets.keys()
-    )
-
     print()
+    print("=" * 80)
+    print("Market Radar V0.18")
     print(
-        "=" * 80
-    )
-
-    print(
-        "Market Radar V0.18"
-    )
-
-    print(
-        "Binance Batch "
+        "Binance Spot Batch "
         "Realtime Worker"
     )
-
-    print(
-        "=" * 80
-    )
-
+    print("=" * 80)
     print()
 
     print(
-        "Binance Assets："
+        "Binance Spot Assets："
     )
 
     for (
@@ -1242,8 +1242,7 @@ async def run_binance_batch():
 
         print(
             f"- {symbol} "
-            f"(Asset ID="
-            f"{asset_id})"
+            f"(Asset ID={asset_id})"
         )
 
     print()
@@ -1254,31 +1253,27 @@ async def run_binance_batch():
         )
     )
 
-    # =====================================================
-    # 只有一个 WebSocket
-    # =====================================================
-
     async for snapshot in (
-            provider.stream_markets_dynamic(
-                symbol_loader=(
-                        load_binance_symbols
-                ),
-                refresh_seconds=5,
-            )
+        provider.stream_markets_dynamic(
+            symbol_loader=(
+                load_binance_spot_symbols
+            ),
+            refresh_seconds=5,
+        )
     ):
 
         symbol = (
             snapshot.symbol
         )
 
-        # =========================================================
-        # 每次行情都根据数据库重新解析 Asset ID
-        #
-        # V0.9 动态资产需要这样做。
-        # =========================================================
+        # =============================================
+        # 动态重新读取当前 Spot Asset
+        # =============================================
 
         current_assets = (
-            load_binance_assets()
+            load_binance_assets(
+                segment="SPOT"
+            )
         )
 
         asset_id = (
@@ -1291,36 +1286,147 @@ async def run_binance_batch():
 
             continue
 
+        # =============================================
+        # 保存行情 + Alert Engine
+        # =============================================
+
         results = (
             process_snapshot(
-                asset_id=(
-                    asset_id
-                ),
-                snapshot=(
-                    snapshot
-                ),
+                asset_id=asset_id,
+                snapshot=snapshot,
             )
         )
 
+        # =============================================
+        # Alert 输出
+        # =============================================
+
         print_alert_results(
-            symbol=(
-                symbol
-            ),
-            snapshot=(
-                snapshot
-            ),
-            results=(
-                results
-            ),
+            symbol=symbol,
+            snapshot=snapshot,
+            results=results,
         )
 
+        # =============================================
+        # Heartbeat
+        # =============================================
+
         print_heartbeat(
-            symbol=(
+            symbol=symbol,
+            snapshot=snapshot,
+        )
+
+# =========================================================
+# Binance Futures Batch Worker
+# =========================================================
+
+async def run_binance_futures_batch():
+
+    assets = (
+        load_binance_assets(
+            segment="FUTURES"
+        )
+    )
+
+    if not assets:
+
+        print(
+            "没有 Binance Futures Asset。"
+        )
+
+        return
+
+    print()
+    print("=" * 80)
+    print("Market Radar V0.18")
+    print(
+        "Binance Futures Batch "
+        "Realtime Worker"
+    )
+    print("=" * 80)
+    print()
+
+    print(
+        "Binance Futures Assets："
+    )
+
+    for (
+        symbol,
+        asset_id,
+    ) in assets.items():
+
+        print(
+            f"- {symbol} "
+            f"(Asset ID={asset_id})"
+        )
+
+    print()
+
+    provider = (
+        BinanceFuturesProvider()
+    )
+
+    async for snapshot in (
+        provider.stream_markets_dynamic(
+            symbol_loader=(
+                load_binance_futures_symbols
+            ),
+            refresh_seconds=5,
+        )
+    ):
+
+        symbol = (
+            snapshot.symbol
+        )
+
+        # =============================================
+        # 动态读取 Futures Asset
+        # =============================================
+
+        current_assets = (
+            load_binance_assets(
+                segment="FUTURES"
+            )
+        )
+
+        asset_id = (
+            current_assets.get(
                 symbol
-            ),
-            snapshot=(
-                snapshot
-            ),
+            )
+        )
+
+        if asset_id is None:
+
+            continue
+
+        # =============================================
+        # 保存行情 + Alert Engine
+        # =============================================
+
+        results = (
+            process_snapshot(
+                asset_id=asset_id,
+                snapshot=snapshot,
+            )
+        )
+
+        # =============================================
+        # Alert 输出
+        # =============================================
+
+        print_alert_results(
+            symbol=symbol,
+            snapshot=snapshot,
+            results=results,
+        )
+
+        # =============================================
+        # Heartbeat
+        # =============================================
+
+        print_heartbeat(
+            symbol=symbol,
+            snapshot=snapshot,
         )
 
 def print_krx_snapshot(
@@ -1489,8 +1595,10 @@ async def run_krx_polling(
 # =========================================================
 
 async def main():
+
     await asyncio.gather(
         run_binance_batch(),
+        run_binance_futures_batch(),
         run_moomoo_realtime(),
     )
 

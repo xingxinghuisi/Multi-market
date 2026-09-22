@@ -25,6 +25,7 @@ MetricType = Literal[
 OperatorType = Literal[
     "crossing_up",
     "crossing_down",
+    "step",
 ]
 
 
@@ -138,6 +139,11 @@ class AssetQuickCreate(BaseModel):
     name: str | None = Field(
         default=None,
         max_length=200,
+    )
+
+    segment: str | None = Field(
+        default=None,
+        max_length=20,
     )
 
     enabled: bool = True

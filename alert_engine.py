@@ -257,11 +257,184 @@ class AlertEngine:
 
         status = "none"
 
+
+
+        # =================================================
+        # 固定步长提醒
+        #
+        # 例：
+        # anchor = 86100
+        # step   = 100
+        #
+        # 86200 -> 提醒
+        # 86300 -> 再提醒
+        #
+        # 86000 -> 向下提醒
+        # =================================================
+
+        if operator == "step":
+
+            step_size = threshold
+
+            if step_size <= 0:
+
+                raise ValueError(
+                    "step 模式的步长必须大于 0"
+                )
+
+            anchor_value = (
+                previous_value
+            )
+
+            difference = (
+                current_value
+                - anchor_value
+            )
+
+            absolute_difference = (
+                abs(
+                    difference
+                )
+            )
+
+            # ---------------------------------------------
+            # 还没有跨越一个完整步长
+            #
+            # 注意：
+            # step 模式不能把 last_value 更新成当前价格，
+            # 因为 last_value 在这里代表“锚点”。
+            # ---------------------------------------------
+
+            if (
+                absolute_difference
+                < step_size
+            ):
+
+                return {
+                    "status": "none",
+
+                    "previous_value":
+                        anchor_value,
+
+                    "current_value":
+                        current_value,
+
+                    "threshold":
+                        step_size,
+
+                    "step_size":
+                        step_size,
+
+                    "step_count":
+                        0,
+
+                    "state":
+                        new_state,
+                }
+
+
+            # ---------------------------------------------
+            # 一次可能跨越多个档位
+            #
+            # 86100 -> 86450
+            #
+            # 共跨：
+            # 86200
+            # 86300
+            # 86400
+            #
+            # 只发送一次通知
+            # ---------------------------------------------
+
+            step_count = int(
+                absolute_difference
+                // step_size
+            )
+
+
+            if difference > 0:
+
+                direction = "up"
+
+                new_anchor = (
+                    anchor_value
+                    + (
+                        step_count
+                        * step_size
+                    )
+                )
+
+            else:
+
+                direction = "down"
+
+                new_anchor = (
+                    anchor_value
+                    - (
+                        step_count
+                        * step_size
+                    )
+                )
+
+
+            # ---------------------------------------------
+            # 更新锚点
+            # ---------------------------------------------
+
+            new_state[
+                "last_value"
+            ] = new_anchor
+
+            new_state[
+                "last_triggered_at"
+            ] = now
+
+            new_state[
+                "trigger_count"
+            ] += 1
+
+
+            return {
+                "status":
+                    "triggered",
+
+                "previous_value":
+                    anchor_value,
+
+                "current_value":
+                    current_value,
+
+                "threshold":
+                    step_size,
+
+                "step_size":
+                    step_size,
+
+                "step_count":
+                    step_count,
+
+                "direction":
+                    direction,
+
+                "anchor_before":
+                    anchor_value,
+
+                "anchor_after":
+                    new_anchor,
+
+                "state":
+                    new_state,
+            }
+
+
         # =================================================
         # 向上突破
         # =================================================
 
-        if operator == "crossing_up":
+        elif operator == "crossing_up":
+        # =================================================
+        # 向上突破
+        # =================================================
 
             # ---------------------------------------------
             # 重新武装
