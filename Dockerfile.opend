@@ -1,0 +1,19 @@
+FROM ubuntu:24.04
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       ca-certificates \
+       libstdc++6 \
+       libgcc-s1 \
+       zlib1g \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/opend
+
+COPY opend/moomoo_OpenD_10.11.7108_Ubuntu18.04/moomoo_OpenD_10.11.7108_Ubuntu18.04/ ./
+
+RUN chmod +x ./OpenD
+
+ENV HOME=/root
+
+ENTRYPOINT ["./OpenD"]

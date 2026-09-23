@@ -1,0 +1,30 @@
+services:
+
+  opend:
+    build:
+      context: .
+      dockerfile: Dockerfile.opend
+
+    container_name: korea-radar-opend
+
+    command:
+      - "-login_account=${MOOMOO_LOGIN_ACCOUNT}"
+      - "-login_by_remember=1"
+      - "-api_ip=0.0.0.0"
+      - "-api_port=11111"
+      - "-lang=en"
+      - "-console=1"
+
+    volumes:
+      - ./opend-state:/root/.com.moomoo.OpenD
+
+    expose:
+      - "11111"
+
+    restart: unless-stopped
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"

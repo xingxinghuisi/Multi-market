@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+            name="viewport"
+            content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Market Radar</title>
+
+    <link
+            rel="stylesheet"
+            href="/static/style.css"
+    >
+
+</head>
+
+<body>
+
+<main class="container">
+
+    <!-- =========================================
+         Header
+    ========================================== -->
+
+    <header class="page-header">
+
+        <div>
+
+            <h1>
+                Market Radar
+            </h1>
+
+            <p>
+                Multi-Market Realtime Monitor
+            </p>
+
+        </div>
+
+        <div
+                id="connection-status"
+                class="connection-offline"
+        >
+            ○ 正在连接
+        </div>
+
+    </header>
+
+
+    <!-- =========================================
+         添加资产
+    ========================================== -->
+
+    <section class="asset-manager">
+
+        <h2>
+            添加资产
+        </h2>
+
+        <form id="asset-form">
+
+            <select
+                    id="asset-market"
+                    required
+            >
+
+                <option value="US">
+                    美股
+                </option>
+
+                <option value="HK">
+                    港股
+                </option>
+
+                <option value="CRYPTO">
+                    Crypto
+                </option>
+
+            </select>
+
+
+            <input
+                    id="asset-symbol"
+                    type="text"
+                    placeholder="代码，例如 NVDA / 1810 / DOGEUSDT"
+                    autocomplete="off"
+                    required
+            >
+
+            <div
+        id="asset-search-results"
+        class="asset-search-results"
+></div>
+
+
+            <input
+                    id="asset-name"
+                    type="text"
+                    placeholder="名称，可选"
+                    autocomplete="off"
+            >
+
+
+            <button type="submit">
+                添加资产
+            </button>
+
+        </form>
+
+
+        <div id="asset-form-message"></div>
+
+    </section>
+
+    <section class="alert-rules-section">
+
+        <div class="section-header">
+            <h2>提醒规则</h2>
+        </div>
+
+        <form
+                id="alert-rule-form"
+                class="alert-rule-form"
+        >
+
+            <select
+                    id="alert-asset"
+                    required
+            >
+                <option value="">
+                    选择资产
+                </option>
+            </select>
+
+
+            <select
+                    id="alert-metric"
+                    required
+            >
+                <option value="price">
+                    价格
+                </option>
+
+                <option value="change_pct">
+                    涨跌幅 %
+                </option>
+
+                <option value="price_change">
+                    价格变动
+                </option>
+            </select>
+
+
+            <div class="alert-setting-field">
+
+                <label for="alert-mode">
+                    提醒方式
+                </label>
+
+                <select
+                        id="alert-mode"
+                >
+                    <option value="fixed">
+                        指定阈值
+                    </option>
+
+                    <option value="step">
+                        固定步长
+                    </option>
+                </select>
+
+            </div>
+
+            <div
+                    id="alert-operator-field"
+                    class="alert-setting-field"
+            >
+
+                <label for="alert-operator">
+                    突破方向
+                </label>
+
+                <select
+                        id="alert-operator"
+                        required
+                >
+                    <option value="crossing_up">
+                        向上突破
+                    </option>
+
+                    <option value="crossing_down">
+                        向下跌破
+                    </option>
+                </select>
+
+            </div>
+
+
+            <div class="alert-setting-field">
+
+                <label
+                        id="alert-value-label"
+                        for="alert-value"
+                >
+                    触发值
+                </label>
+
+                <input
+                        id="alert-value"
+                        type="number"
+                        step="any"
+                        placeholder="阈值"
+                        required
+                >
+
+                <small
+                        id="alert-value-help"
+                >
+                    达到指定价格时提醒
+                </small>
+
+            </div>
+
+
+            <div class="alert-setting-field">
+
+                <label for="alert-reset-buffer">
+                    重新激活距离
+                </label>
+
+                <div class="alert-input-with-unit">
+
+                    <input
+                            id="alert-reset-buffer"
+                            type="number"
+                            step="any"
+                            min="0"
+                            value="0"
+                    >
+
+                    <span id="alert-reset-unit">
+            —
+        </span>
+
+                </div>
+
+                <small id="alert-reset-help">
+                    触发后，行情需要离开阈值一定距离才允许再次提醒
+                </small>
+
+            </div>
+
+
+            <div class="alert-setting-field">
+
+                <label for="alert-cooldown">
+                    最短提醒间隔
+                </label>
+
+                <div class="alert-input-with-unit">
+
+                    <input
+                            id="alert-cooldown"
+                            type="number"
+                            step="1"
+                            min="0"
+                            value="5"
+                    >
+
+                    <span>
+            分钟
+        </span>
+
+                </div>
+
+                <small>
+                    即使重新突破，也不会在此时间内重复通知
+                </small>
+
+            </div>
+
+
+            <button
+                    type="submit"
+            >
+                创建提醒
+            </button>
+
+        </form>
+
+
+        <div
+                id="alert-rule-message"
+                class="form-message"
+        >
+        </div>
+
+
+        <div
+                id="alert-rules-list"
+                class="alert-rules-list"
+        >
+        </div>
+
+    </section>
+
+
+    <!-- =========================================
+         Crypto
+    ========================================== -->
+
+    <section class="market-section">
+
+        <div class="section-header">
+
+            <h2>
+                Crypto
+            </h2>
+
+            <span>
+                    Binance
+                </span>
+
+        </div>
+
+        <div
+                id="crypto-list"
+                class="market-grid"
+        ></div>
+
+    </section>
+
+
+    <!-- =========================================
+         US Stocks
+    ========================================== -->
+
+    <section class="market-section">
+
+        <div class="section-header">
+
+            <h2>
+                US Stocks
+            </h2>
+
+            <span>
+                    Moomoo
+                </span>
+
+        </div>
+
+        <div
+                id="us-list"
+                class="market-grid"
+        ></div>
+
+    </section>
+
+
+    <!-- =========================================
+         Hong Kong Stocks
+    ========================================== -->
+
+    <section class="market-section">
+
+        <div class="section-header">
+
+            <h2>
+                Hong Kong Stocks
+            </h2>
+
+            <span>
+                    Moomoo
+                </span>
+
+        </div>
+
+        <div
+                id="hk-list"
+                class="market-grid"
+        ></div>
+
+    </section>
+
+
+    <!-- =========================================
+         Korea
+    ========================================== -->
+
+    <section class="market-section">
+
+        <div class="section-header">
+
+            <h2>
+                Korea
+            </h2>
+
+            <span>
+                    Korea Market
+                </span>
+
+        </div>
+
+        <div
+                id="krx-list"
+                class="market-grid"
+        ></div>
+
+    </section>
+
+</main>
+
+
+<script src="/static/app.js"></script>
+
+</body>
+
+</html>

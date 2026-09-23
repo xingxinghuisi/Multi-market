@@ -1,49 +1,58 @@
-# Python
-.venv/
-venv/
-__pycache__/
-*.py[cod]
-
-# Environment / Secrets
+# Secrets
 .env
 .env.*
 !.env.example
 
-# IDE
-.idea/
-.vscode/
+# Certificates
+*.pem
+*.key
+*.crt
+*.csr
 
-# Database / Local Data
+# Database / runtime
 *.db
 *.sqlite
 *.sqlite3
-data/*.db
-data/*.sqlite
-data/*.sqlite3
+app/data/
+opend-state/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+.venv_clean/
+.venv_test/
 
 # Logs
 *.log
 logs/
 
-# Test / Cache
-.pytest_cache/
-.coverage
-htmlcov/
-
-# OS
+# IDE / OS
 .DS_Store
 Thumbs.db
+.idea/
+.vscode/
 
-# Temporary
-*.tmp
+# Backups
 *.bak
+*.bak_*
+*.backup
 
-# Local provider diagnostic scripts
-infoway_global_test.py
-moomoo_provider_test.py
-moomoo_realtime_test.py
+# Deployment archives
+*.tar.gz
+*.zip
 
-# SQLite runtime files
-data/*.db-journal
-data/*.db-wal
-data/*.db-shm
+# Third-party Moomoo OpenD binaries
+opend/
+
+# Runtime PID files
+app/.run/
+
+# Temporary debug / inspection files
+app/docker_check.txt
+app/news_debug.txt
+app/news_fix_targets.txt
+app/imports.txt
+app/startup_entries.txt
+app/providers/11.txt

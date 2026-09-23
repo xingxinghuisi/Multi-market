@@ -1,0 +1,130 @@
+services:
+
+  opend:
+    build:
+      context: .
+      dockerfile: Dockerfile.opend
+
+    container_name: korea-radar-opend
+
+    command:
+      - "-login_account=${MOOMOO_LOGIN_ACCOUNT}"
+      - "-login_by_remember=1"
+      - "-api_ip=0.0.0.0"
+      - "-api_port=11111"
+      - "-lang=en"
+      - "-console=1"
+
+    volumes:
+      - ./opend-state:/root/.com.moomoo.OpenD
+
+    expose:
+      - "11111"
+
+    restart: unless-stopped
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+
+  api:
+    image: korea-market-radar-app:latest
+
+    container_name: korea-radar-api
+
+    command:
+      - uvicorn
+      - api:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+
+    env_file:
+      - .env.production
+
+    volumes:
+      - ./app/data:/app/data
+
+    ports:
+      - "127.0.0.1:8000:8000"
+
+    depends_on:
+      - opend
+
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/openapi.json', timeout=3)"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
+    restart: unless-stopped
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+
+  market_worker:
+    image: korea-market-radar-app:latest
+
+    container_name: korea-radar-market
+
+    command:
+      - python
+      - market_worker.py
+
+    env_file:
+      - .env.production
+
+    volumes:
+      - ./app/data:/app/data
+
+    depends_on:
+      - opend
+
+    restart: unless-stopped
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+
+  news_worker:
+    image: korea-market-radar-app:latest
+
+    container_name: korea-radar-news
+
+    command:
+      - python
+      - news_worker.py
+
+    env_file:
+      - .env.production
+
+    volumes:
+      - ./app/data:/app/data
+
+    depends_on:
+      api:
+        condition: service_healthy
+
+    restart: unless-stopped
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"

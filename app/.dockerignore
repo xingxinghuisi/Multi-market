@@ -1,0 +1,15 @@
+.venv
+.venv_clean
+.venv_test
+.idea
+.run
+.git
+__pycache__
+*/__pycache__
+*.pyc
+.pytest_cache
+*.tar.gz
+.env
+.env.*
+logs
+reports
