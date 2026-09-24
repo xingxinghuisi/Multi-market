@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import time
 
@@ -638,6 +639,29 @@ class BinanceFuturesProvider(
                         price = float(
                             data["p"]
                         )
+
+                        # =================================
+                        # Invalid Futures trade guard
+                        #
+                        # Binance trade price must be
+                        # finite and greater than zero.
+                        # =================================
+
+                        if (
+                            not math.isfinite(
+                                price
+                            )
+                            or price <= 0
+                        ):
+
+                            print(
+                                "[FUTURES INVALID PRICE] "
+                                f"{symbol} | "
+                                f"raw_price="
+                                f"{data.get('p')!r}"
+                            )
+
+                            continue
 
                         quantity = float(
                             data.get(

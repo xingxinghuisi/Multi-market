@@ -25,6 +25,9 @@ def rule_to_dict(
         "metric": rule.metric,
         "operator": rule.operator,
         "value": rule.value,
+        "step_anchor": (
+            rule.step_anchor
+        ),
         "reset_buffer": (
             rule.reset_buffer
         ),
@@ -83,10 +86,21 @@ def get_or_create_state(
     if state:
         return state
 
+    initial_value = None
+
+    if (
+        rule.operator == "step"
+        and
+        rule.step_anchor is not None
+    ):
+        initial_value = float(
+            rule.step_anchor
+        )
+
     state = AlertState(
         rule_id=rule.id,
         armed=True,
-        last_value=None,
+        last_value=initial_value,
         trigger_count=0,
     )
 

@@ -2494,6 +2494,9 @@ def serialize_rule(
         "operator": rule.operator,
         "value": rule.value,
 
+        "step_anchor":
+            rule.step_anchor,
+
         "reset_buffer":
             rule.reset_buffer,
 
@@ -4197,6 +4200,60 @@ def create_alert_rule(
             ),
         )
 
+    # =====================================================
+    # Step 模式
+    #
+    # value       = 每次变化多少
+    # step_anchor = 用户指定的初始锚点
+    # =====================================================
+
+    step_anchor = None
+
+    if payload.operator == "step":
+
+        if payload.metric != "price":
+
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Step alert only supports "
+                    "price metric"
+                ),
+            )
+
+        if payload.value <= 0:
+
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Step size must be greater than 0"
+                ),
+            )
+
+        if payload.step_anchor is None:
+
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Step alert requires "
+                    "an initial anchor price"
+                ),
+            )
+
+        if payload.step_anchor <= 0:
+
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Step anchor must be "
+                    "greater than 0"
+                ),
+            )
+
+        step_anchor = float(
+            payload.step_anchor
+        )
+
     rule = AlertRule(
         user_id=user.id,
 
@@ -4207,6 +4264,10 @@ def create_alert_rule(
         operator=payload.operator,
 
         value=payload.value,
+
+        step_anchor=(
+            step_anchor
+        ),
 
         reset_buffer=(
             payload.reset_buffer
@@ -4273,15 +4334,78 @@ def update_alert_rule(
             value,
         )
 
-    # ---------------------------------------------
-    # 规则改变以后：
-    # 清除旧 AlertState
-    # ---------------------------------------------
+    # =====================================================
+    # 更新后的完整规则校验
+    # =====================================================
 
-    reset_alert_state(
-        db,
-        rule.id,
-    )
+    if rule.operator == "step":
+
+        if rule.metric != "price":
+
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Step alert only supports "
+                    "price metric"
+                ),
+            )
+
+        if rule.value <= 0:
+
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Step size must be greater than 0"
+                ),
+            )
+
+        if (
+            rule.step_anchor is None
+            or
+            rule.step_anchor <= 0
+        ):
+
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Step alert requires "
+                    "an initial anchor price"
+                ),
+            )
+
+    else:
+
+        # 非 Step 模式不保留 Step 初始锚点
+        rule.step_anchor = None
+
+
+    # =====================================================
+    # 只有真正影响提醒计算的参数发生变化，
+    # 才重置 AlertState。
+    #
+    # 单纯 enabled true / false 不重置动态锚点。
+    # =====================================================
+
+    state_affecting_fields = {
+        "metric",
+        "operator",
+        "value",
+        "step_anchor",
+        "reset_buffer",
+        "cooldown_seconds",
+    }
+
+    if (
+        state_affecting_fields
+        .intersection(
+            updates.keys()
+        )
+    ):
+
+        reset_alert_state(
+            db,
+            rule.id,
+        )
 
     db.commit()
 

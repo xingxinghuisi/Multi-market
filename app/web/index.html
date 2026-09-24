@@ -200,6 +200,31 @@
             </div>
 
 
+            <div
+                    id="alert-step-anchor-field"
+                    class="alert-setting-field"
+                    style="display: none;"
+            >
+
+                <label for="alert-step-anchor">
+                    初始锚点
+                </label>
+
+                <input
+                        id="alert-step-anchor"
+                        type="number"
+                        step="any"
+                        min="0"
+                        placeholder="例如 21.10"
+                >
+
+                <small>
+                    由你指定固定步长提醒的起始价格，不会自动使用当前市场价格
+                </small>
+
+            </div>
+
+
             <div class="alert-setting-field">
 
                 <label
@@ -415,7 +440,7 @@
 </main>
 
 
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v=0.18.1"></script>
 
 </body>
 

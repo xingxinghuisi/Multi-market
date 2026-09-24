@@ -1,5 +1,6 @@
 import asyncio
 import time
+import math
 
 from providers.registry import provider_registry
 
@@ -411,6 +412,42 @@ def process_snapshot(
     asset_id: int,
     snapshot,
 ):
+
+    # =====================================================
+    # Invalid market price guard
+    #
+    # Never allow zero / negative / NaN / Infinity prices
+    # to enter DB or Alert Engine.
+    # =====================================================
+
+    try:
+        snapshot_price = float(
+            snapshot.price
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        print(
+            "[INVALID PRICE] "
+            f"{getattr(snapshot, 'symbol', '?')} | "
+            f"price={getattr(snapshot, 'price', None)!r}"
+        )
+        return []
+
+    if (
+        not math.isfinite(
+            snapshot_price
+        )
+        or snapshot_price <= 0
+    ):
+        print(
+            "[INVALID PRICE] "
+            f"{getattr(snapshot, 'symbol', '?')} | "
+            f"price={snapshot_price!r} | "
+            "snapshot ignored"
+        )
+        return []
 
     market_data = (
         snapshot.to_dict()

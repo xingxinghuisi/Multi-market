@@ -239,6 +239,18 @@ class AlertRule(Base):
         nullable=False,
     )
 
+    # Step 模式：
+    # 用户创建规则时指定的初始锚点。
+    #
+    # 动态移动后的当前锚点继续保存在
+    # AlertState.last_value。
+    step_anchor: Mapped[float | None] = (
+        mapped_column(
+            Float,
+            nullable=True,
+        )
+    )
+
     reset_buffer: Mapped[float] = (
         mapped_column(
             Float,

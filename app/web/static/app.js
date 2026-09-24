@@ -99,6 +99,16 @@ const alertValueInput =
         "alert-value"
     );
 
+const alertStepAnchorField =
+    document.getElementById(
+        "alert-step-anchor-field"
+    );
+
+const alertStepAnchorInput =
+    document.getElementById(
+        "alert-step-anchor"
+    );
+
 const alertResetBufferInput =
     document.getElementById(
         "alert-reset-buffer"
@@ -1309,6 +1319,20 @@ function updateAlertModeUI() {
         }
 
 
+        if (alertStepAnchorField) {
+
+            alertStepAnchorField.style.display =
+                "";
+        }
+
+
+        if (alertStepAnchorInput) {
+
+            alertStepAnchorInput.required =
+                true;
+        }
+
+
         if (alertValueLabel) {
 
             alertValueLabel.textContent =
@@ -1326,7 +1350,7 @@ function updateAlertModeUI() {
         if (alertValueHelp) {
 
             alertValueHelp.textContent =
-                "例如 BTC 当前约 86,100，填写 100 后，86,200、86,300…以及 86,000、85,900…都会分别提醒。";
+                "填写固定步长。例如初始锚点 21.10，步长 0.30，则下一次上涨 21.40、下跌 20.80 时提醒。";
         }
 
 
@@ -1348,6 +1372,20 @@ function updateAlertModeUI() {
 
     alertMetricSelect.disabled =
         false;
+
+
+    if (alertStepAnchorField) {
+
+        alertStepAnchorField.style.display =
+            "none";
+    }
+
+
+    if (alertStepAnchorInput) {
+
+        alertStepAnchorInput.required =
+            false;
+    }
 
 
     if (alertOperatorField) {
@@ -1789,12 +1827,31 @@ if (
         rule.asset.currency
         || "";
 
+    const anchorText =
+        Number.isFinite(
+            Number(
+                rule.step_anchor
+            )
+        )
+            ? Number(
+                rule.step_anchor
+            ).toLocaleString()
+            : "--";
+
     conditionHtml = `
-        每变化
+        初始锚点
+        <strong>
+            ${anchorText}
+            ${currency}
+        </strong>
+
+        · 每变化
+
         <strong>
             ${Number(rule.value).toLocaleString()}
             ${currency}
         </strong>
+
         提醒一次
     `;
 
@@ -1857,7 +1914,7 @@ if (
     ${
         rule.operator === "step"
 
-            ? "双向监控 · 自动移动锚点"
+            ? "双向监控 · 触发后以实际触发价格移动锚点"
 
             : `
                 重新激活距离：
@@ -2889,6 +2946,20 @@ if (
                 );
 
 
+            const isStepMode =
+                alertModeSelect
+                && alertModeSelect.value
+                    === "step";
+
+
+            const stepAnchor =
+                alertStepAnchorInput
+                    ? Number(
+                        alertStepAnchorInput.value
+                    )
+                    : NaN;
+
+
             if (!assetId) {
 
                 alertRuleMessage.textContent =
@@ -2911,17 +2982,43 @@ if (
             }
 
 
+            if (
+                isStepMode
+                &&
+                (
+                    !Number.isFinite(
+                        stepAnchor
+                    )
+                    ||
+                    stepAnchor <= 0
+                )
+            ) {
+
+                alertRuleMessage.textContent =
+                    "请输入正确的初始锚点";
+
+                return;
+            }
+
+
+            if (
+                isStepMode
+                &&
+                value <= 0
+            ) {
+
+                alertRuleMessage.textContent =
+                    "固定步长必须大于 0";
+
+                return;
+            }
+
+
             alertRuleMessage.textContent =
                 "正在创建...";
 
 
             try {
-
-                const isStepMode =
-    alertModeSelect
-    && alertModeSelect.value
-        === "step";
-
 
 await createAlertRule(
     {
@@ -2939,6 +3036,11 @@ await createAlertRule(
                 : alertOperatorSelect.value,
 
         value,
+
+        step_anchor:
+            isStepMode
+                ? stepAnchor
+                : null,
 
         reset_buffer:
             isStepMode
@@ -2962,6 +3064,14 @@ await createAlertRule(
 
                 alertValueInput.value =
                     "";
+
+                if (
+                    alertStepAnchorInput
+                ) {
+
+                    alertStepAnchorInput.value =
+                        "";
+                }
 
 
                 await loadAlertRules();

@@ -43,6 +43,11 @@ class AlertRuleCreate(BaseModel):
 
     value: float
 
+    step_anchor: float | None = Field(
+        default=None,
+        gt=0,
+    )
+
     reset_buffer: float = Field(
         default=0,
         ge=0,
@@ -67,6 +72,11 @@ class AlertRuleUpdate(BaseModel):
     operator: OperatorType | None = None
 
     value: float | None = None
+
+    step_anchor: float | None = Field(
+        default=None,
+        gt=0,
+    )
 
     reset_buffer: float | None = Field(
         default=None,

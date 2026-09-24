@@ -277,10 +277,21 @@ class AlertEngine:
             step_size = threshold
 
             if step_size <= 0:
-
                 raise ValueError(
                     "step 模式的步长必须大于 0"
                 )
+
+            # last_value 在 step 模式中表示：
+            #
+            # 上一次触发提醒时的实际价格
+            #
+            # 例如：
+            #
+            # anchor = 20.55
+            # step   = 0.30
+            #
+            # 上涨目标 = 20.85
+            # 下跌目标 = 20.25
 
             anchor_value = (
                 previous_value
@@ -291,22 +302,24 @@ class AlertEngine:
                 - anchor_value
             )
 
-            absolute_difference = (
-                abs(
-                    difference
-                )
+            absolute_difference = abs(
+                difference
+            )
+
+            # 浮点数容差
+            epsilon = max(
+                abs(step_size) * 1e-12,
+                1e-12,
             )
 
             # ---------------------------------------------
-            # 还没有跨越一个完整步长
-            #
-            # 注意：
-            # step 模式不能把 last_value 更新成当前价格，
-            # 因为 last_value 在这里代表“锚点”。
+            # 尚未达到一个完整步长
+            # 锚点保持不变
             # ---------------------------------------------
 
             if (
                 absolute_difference
+                + epsilon
                 < step_size
             ):
 
@@ -332,54 +345,41 @@ class AlertEngine:
                         new_state,
                 }
 
-
             # ---------------------------------------------
-            # 一次可能跨越多个档位
-            #
-            # 86100 -> 86450
-            #
-            # 共跨：
-            # 86200
-            # 86300
-            # 86400
-            #
-            # 只发送一次通知
+            # 已达到 / 超过一个完整步长
             # ---------------------------------------------
-
-            step_count = int(
-                absolute_difference
-                // step_size
-            )
-
 
             if difference > 0:
-
                 direction = "up"
-
-                new_anchor = (
-                    anchor_value
-                    + (
-                        step_count
-                        * step_size
-                    )
-                )
-
             else:
-
                 direction = "down"
 
-                new_anchor = (
-                    anchor_value
-                    - (
-                        step_count
-                        * step_size
+            # 仅用于通知中显示这次实际跨越了多少档
+            step_count = max(
+                1,
+                int(
+                    (
+                        absolute_difference
+                        + epsilon
                     )
-                )
+                    // step_size
+                ),
+            )
 
+            # =============================================
+            # 核心逻辑：
+            #
+            # 触发时的实际市场价格
+            # 直接成为下一轮的新锚点
+            #
+            # 不再使用：
+            #
+            # old_anchor + N * step
+            # =============================================
 
-            # ---------------------------------------------
-            # 更新锚点
-            # ---------------------------------------------
+            new_anchor = (
+                current_value
+            )
 
             new_state[
                 "last_value"
@@ -392,7 +392,6 @@ class AlertEngine:
             new_state[
                 "trigger_count"
             ] += 1
-
 
             return {
                 "status":
@@ -426,10 +425,6 @@ class AlertEngine:
                     new_state,
             }
 
-
-        # =================================================
-        # 向上突破
-        # =================================================
 
         elif operator == "crossing_up":
         # =================================================

@@ -1,6 +1,7 @@
 from datetime import (
     datetime,
     timezone,
+    timedelta,
 )
 
 from models import (
@@ -11,12 +12,60 @@ from telegram_service import (
 )
 
 
+UTC8 = timezone(
+    timedelta(hours=8)
+)
+
+
+def format_trigger_time(
+    event_time,
+):
+
+    if not isinstance(
+        event_time,
+        datetime,
+    ):
+
+        event_time = datetime.now(
+            timezone.utc
+        )
+
+    # 当前 Binance Futures event_time
+    # 为 naive UTC，统一补 UTC 时区。
+    if event_time.tzinfo is None:
+
+        event_time = (
+            event_time.replace(
+                tzinfo=timezone.utc
+            )
+        )
+
+    local_time = (
+        event_time.astimezone(
+            UTC8
+        )
+    )
+
+    return (
+        f"{local_time.year}年"
+        f"{local_time.month}月"
+        f"{local_time.day}日 "
+        f"{local_time:%H:%M:%S}"
+    )
+
+
 def build_alert_message(
     rule,
     asset,
     snapshot,
     result,
 ) -> str:
+
+    trigger_time_text = (
+        format_trigger_time(
+            snapshot.event_time
+        )
+    )
 
     # =====================================================
     # 方向
@@ -36,13 +85,6 @@ def build_alert_message(
             result.get(
                 "step_size",
                 rule.value,
-            )
-        )
-
-        step_count = int(
-            result.get(
-                "step_count",
-                1,
             )
         )
 
@@ -111,10 +153,7 @@ def build_alert_message(
 
             f"步长："
             f"{step_size:,.2f} "
-            f"{currency}\n"
-
-            f"本次跨越："
-            f"{step_count} 档\n\n"
+            f"{currency}\n\n"
 
             f"原锚点："
             f"{anchor_before:,.2f}\n"
@@ -128,10 +167,14 @@ def build_alert_message(
             f"↓ 下一下跌提醒："
             f"{next_down:,.2f}\n\n"
 
+            f"🕐 触发时间："
+            f"{trigger_time_text}\n\n"
+
             f"Rule #{rule.id}"
         )
 
         return message
+
 
     if rule.operator == "crossing_up":
 
