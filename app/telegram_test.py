@@ -89,7 +89,7 @@ def send_test_message():
     """
 
     message = (
-        "📈 Korea Market Radar\n\n"
+        "📈 MIRAO\n\n"
         "Telegram 通知测试成功。\n\n"
         "下一步将接入韩国股票行情提醒。"
     )

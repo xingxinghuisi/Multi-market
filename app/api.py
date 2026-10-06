@@ -9,10 +9,6 @@ from news_notification_service import (
 
 from hybrid_news_analyzer import HybridNewsAnalyzer
 
-from providers.moomoo import (
-    MoomooRealtimeProvider,
-)
-
 from providers.google_news import (
     GoogleNewsProvider,
 )
@@ -46,7 +42,8 @@ from datetime import datetime, timezone
 
 
 
-from database import SessionLocal
+from database import Base, SessionLocal, engine as database_engine
+from auth_api import authenticated_websocket, current_user_id, install_auth
 from models import (
     Notification,
     DailyPrice,
@@ -54,6 +51,10 @@ from models import (
     AlertState,
     Asset,
     User,
+    UserCredential,
+    UserSession,
+    UserHiddenAsset,
+    TelegramChallenge,
     MarketQuote,
     NewsItem,
     NewsImpact,
@@ -170,11 +171,16 @@ app.mount(
     name="static",
 )
 
+from mobile_api import install_mobile_routes
+
 
 @app.on_event(
     "startup"
 )
 async def start_market_broadcaster():
+
+    Base.metadata.create_all(database_engine, tables=[UserCredential.__table__, UserSession.__table__,
+                                                     UserHiddenAsset.__table__, TelegramChallenge.__table__], checkfirst=True)
 
     app.state.market_broadcast_task = (
         asyncio.create_task(
@@ -252,6 +258,14 @@ _moomoo_asset_catalog_cache = {
 MOOMOO_ASSET_CATALOG_TTL = 300
 
 
+def create_moomoo_provider():
+    # The SDK creates log files on import. Load it only for Moomoo requests,
+    # so the web client and other markets can start without an OpenD setup.
+    from providers.moomoo import MoomooRealtimeProvider
+
+    return MoomooRealtimeProvider()
+
+
 def load_moomoo_asset_catalog(
     market: str,
 ):
@@ -298,7 +312,7 @@ def load_moomoo_asset_catalog(
         return cache["data"]
 
     provider = (
-        MoomooRealtimeProvider()
+        create_moomoo_provider()
     )
 
     data = (
@@ -586,20 +600,14 @@ def get_default_user(
     db: Session,
 ):
 
-    user = db.scalar(
-        select(User).where(
-            User.username == "default"
-        )
-    )
+    user_id = current_user_id()
+    user = db.get(User, user_id) if user_id is not None else None
 
     if not user:
 
         raise HTTPException(
-            status_code=500,
-            detail=(
-                "Default user does not exist. "
-                "Please run init_db.py first."
-            ),
+            status_code=401,
+            detail="请先登录",
         )
 
     return user
@@ -2280,10 +2288,6 @@ def analyze_pending_news(
         ),
     )
 
-    user = get_default_user(
-        db
-    )
-
     rows = db.execute(
         select(
             NewsItem,
@@ -2300,11 +2304,6 @@ def analyze_pending_news(
             Asset.id
             == NewsImpact.asset_id,
         )
-        .join(
-            WatchlistItem,
-            WatchlistItem.asset_id
-            == Asset.id,
-        )
         .where(
             NewsImpact.reason.like(
                 "%not analyzed yet%"
@@ -2314,12 +2313,7 @@ def analyze_pending_news(
                 True
             ),
 
-            WatchlistItem.user_id
-            == user.id,
-
-            WatchlistItem.news_enabled.is_(
-                True
-            ),
+            Asset.id.in_(select(WatchlistItem.asset_id).where(WatchlistItem.news_enabled.is_(True))),
         )
         .order_by(
             NewsItem.id.desc()
@@ -2426,7 +2420,7 @@ def get_rule_or_404(
         rule_id,
     )
 
-    if not rule:
+    if not rule or rule.user_id != get_default_user(db).id:
 
         raise HTTPException(
             status_code=404,
@@ -2520,7 +2514,7 @@ def root():
 
     return FileResponse(
         WEB_DIR
-        / "index.html"
+        / "mobile.html"
     )
 
 # =========================================================
@@ -2682,7 +2676,7 @@ def search_assets(
 
             provider = (
 
-                MoomooRealtimeProvider()
+                create_moomoo_provider()
 
             )
 
@@ -2725,7 +2719,7 @@ def search_assets(
 
             provider = (
 
-                MoomooRealtimeProvider()
+                create_moomoo_provider()
 
             )
 
@@ -2870,6 +2864,10 @@ def get_asset(
 async def websocket_market(
     websocket: WebSocket,
 ):
+
+    if not authenticated_websocket(websocket):
+        await websocket.close(code=1008)
+        return
 
     await websocket.accept()
 
@@ -3491,7 +3489,7 @@ def create_asset_quick(
 
             provider = (
 
-                MoomooRealtimeProvider()
+                create_moomoo_provider()
 
             )
 
@@ -3662,7 +3660,7 @@ def create_asset_quick(
 
             provider = (
 
-                MoomooRealtimeProvider()
+                create_moomoo_provider()
 
             )
 
@@ -4064,6 +4062,8 @@ def get_alert_rules(
     db: Session = Depends(get_db),
 ):
 
+    user = get_default_user(db)
+
     statement = (
         select(
             AlertRule,
@@ -4080,6 +4080,7 @@ def get_alert_rules(
             AlertRule.user_id
             == User.id,
         )
+        .where(AlertRule.user_id == user.id)
         .order_by(
             AlertRule.id
         )
@@ -4510,3 +4511,7 @@ def delete_alert_rule(
         "deleted": True,
         "rule_id": rule_id,
     }
+
+
+install_mobile_routes(app, get_db, get_default_user, lambda url: _binance_read_json(url))
+install_auth(app, get_db)

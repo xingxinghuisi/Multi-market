@@ -825,3 +825,48 @@ class Notification(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+
+
+class UserHiddenAsset(Base):
+    """A user's removed catalog entry; the shared market asset stays intact."""
+
+    __tablename__ = "user_hidden_assets"
+    __table_args__ = (UniqueConstraint("user_id", "asset_id", name="uq_hidden_user_asset"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    asset_id: Mapped[int] = mapped_column(ForeignKey("assets.id"), nullable=False, index=True)
+
+
+class TelegramChallenge(Base):
+    """Short-lived proof that the account owner can read a Telegram target."""
+
+    __tablename__ = "telegram_challenges"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    chat_id: Mapped[str] = mapped_column(String(30), nullable=False)
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+class UserCredential(Base):
+    """Separate table so existing users need no column migration."""
+
+    __tablename__ = "user_credentials"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    csrf_token: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

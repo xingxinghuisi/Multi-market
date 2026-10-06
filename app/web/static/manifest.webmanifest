@@ -1,0 +1,10 @@
+{
+  "id": "/", "name": "MIRAO", "short_name": "MIRAO",
+  "description": "全球市场 · 行情 · 关注 · 提醒",
+  "lang": "zh-CN", "start_url": "/#home", "scope": "/",
+  "display": "standalone", "background_color": "#f5f7f3", "theme_color": "#f5f7f3",
+  "icons": [
+    {"src": "/static/radar-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+    {"src": "/static/radar-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+  ]
+}

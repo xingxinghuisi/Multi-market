@@ -102,6 +102,33 @@ services:
         max-file: "3"
 
 
+  crypto_metrics_worker:
+    image: korea-market-radar-app:latest
+
+    container_name: korea-radar-crypto-metrics
+
+    command:
+      - python
+      - crypto_metrics_worker.py
+
+    env_file:
+      - .env.production
+
+    environment:
+      MARKET_RADAR_API_URL: http://api:8000
+
+    depends_on:
+      api:
+        condition: service_healthy
+
+    restart: unless-stopped
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
   news_worker:
     image: korea-market-radar-app:latest
 
@@ -113,6 +140,10 @@ services:
 
     env_file:
       - .env.production
+
+    environment:
+      # Container localhost is the worker itself; the API is the Compose service.
+      MARKET_RADAR_API_URL: http://api:8000
 
     volumes:
       - ./app/data:/app/data

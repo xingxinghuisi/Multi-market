@@ -4,10 +4,15 @@ from datetime import (
     timedelta,
 )
 
+from sqlalchemy import func, select
+
 from models import (
+    AlertRule,
     Notification,
+    User,
 )
 from telegram_service import (
+    CHAT_ID,
     send_telegram_message,
 )
 
@@ -15,6 +20,23 @@ from telegram_service import (
 UTC8 = timezone(
     timedelta(hours=8)
 )
+
+
+def get_display_rule_number(
+    db,
+    rule,
+) -> int:
+
+    rules_before = db.scalar(
+        select(func.count())
+        .select_from(AlertRule)
+        .where(
+            AlertRule.user_id == rule.user_id,
+            AlertRule.id < rule.id,
+        )
+    ) or 0
+
+    return int(rules_before) + 1
 
 
 def format_trigger_time(
@@ -59,7 +81,11 @@ def build_alert_message(
     asset,
     snapshot,
     result,
+    rule_number=None,
 ) -> str:
+
+    if rule_number is None:
+        rule_number = rule.id
 
     trigger_time_text = (
         format_trigger_time(
@@ -141,15 +167,11 @@ def build_alert_message(
 
 
         message = (
-            "🚨 Market Radar\n\n"
-
             f"{direction_icon} "
             f"{asset.symbol} "
-            f"{direction_text}\n\n"
-
-            f"当前价格："
+            f"{direction_text} · 当前价 "
             f"{current_value:,.2f} "
-            f"{currency}\n"
+            f"{currency}\n\n"
 
             f"步长："
             f"{step_size:,.2f} "
@@ -170,7 +192,7 @@ def build_alert_message(
             f"🕐 触发时间："
             f"{trigger_time_text}\n\n"
 
-            f"Rule #{rule.id}"
+            f"Rule #{rule_number}"
         )
 
         return message
@@ -212,31 +234,33 @@ def build_alert_message(
     # 今日涨跌
     # =====================================================
 
-    change_text = "-"
-
-    if snapshot.change_pct is not None:
-
-        change_text = (
-            f"{snapshot.change_pct:+.2f}%"
-        )
+    change_text = (
+        f"{snapshot.change_pct:+.2f}%"
+        if snapshot.change_pct is not None
+        else "-"
+    )
 
     # =====================================================
     # 消息
     # =====================================================
 
+    direction_icon = (
+        "📈" if rule.operator == "crossing_up" else "📉"
+    )
+
     message = (
-        "🚨 Market Radar\n\n"
-        f"{asset.symbol} {action_text}\n\n"
+        f"{direction_icon} {asset.symbol} {action_text} · 当前价 "
+        f"{snapshot.price:,.2f} {asset.currency}\n\n"
         f"监控指标：{metric_text}\n"
         f"当前价格：{snapshot.price:,.2f} "
         f"{asset.currency}\n"
         f"触发阈值：{rule.value:,.2f}\n"
-        f"今日涨跌：{snapshot.change_pct:+.2f}%"
+        f"今日涨跌：{change_text}\n"
         f"Previous："
         f"{result.get('previous_value')}\n"
         f"Current："
         f"{result.get('current_value')}\n\n"
-        f"Rule #{rule.id}"
+        f"Rule #{rule_number}"
     )
 
     return message
@@ -344,6 +368,7 @@ def send_alert_notification(
         asset=asset,
         snapshot=snapshot,
         result=result,
+        rule_number=get_display_rule_number(db, rule),
     )
 
     # =====================================================
@@ -359,6 +384,13 @@ def send_alert_notification(
         )
     )
 
+    user = db.get(User, rule.user_id)
+    target = user.telegram_chat_id or (CHAT_ID if user.username == "default" else None) if user else None
+    if not target:
+        notification.channel = "in_app"
+        notification.status = "in_app"
+        return notification
+
     # =====================================================
     # Telegram
     # =====================================================
@@ -367,7 +399,8 @@ def send_alert_notification(
 
         telegram_sent = (
             send_telegram_message(
-                message
+                message,
+                chat_id=target,
             )
         )
 

@@ -16,6 +16,7 @@ from models import (
 )
 
 from telegram_service import (
+    CHAT_ID,
     send_telegram_message,
 )
 
@@ -69,7 +70,7 @@ def build_news_alert_message(
     )
 
     return (
-        "📰 Market Radar 新闻提醒\n\n"
+        "📰 MIRAO 新闻提醒\n\n"
 
         f"资产：{asset.symbol}\n"
         f"名称：{asset.name}\n\n"
@@ -160,200 +161,55 @@ def maybe_send_news_notification(
             "reason": "low_impact",
         }
 
-    # =====================================================
-    # 当前默认用户
-    # =====================================================
-
-    user = db.scalar(
-        select(
-            User
+    watches = db.scalars(
+        select(WatchlistItem).where(
+            WatchlistItem.asset_id == asset.id,
+            WatchlistItem.news_enabled.is_(True),
         )
-        .where(
-            User.username
-            == "default"
-        )
-    )
+    ).all()
+    if not watches:
+        return {"status": "skipped", "reason": "not_watched"}
 
-    if user is None:
-
-        return {
-            "status": "skipped",
-            "reason": "user_not_found",
-        }
-
-    # =====================================================
-    # 必须已经关注
-    # 且开启新闻
-    # =====================================================
-
-    watch = db.scalar(
-        select(
-            WatchlistItem
-        )
-        .where(
-            WatchlistItem.user_id
-            == user.id,
-
-            WatchlistItem.asset_id
-            == asset.id,
-
-            WatchlistItem.news_enabled
-            .is_(True),
-        )
-    )
-
-    if watch is None:
-
-        return {
-            "status": "skipped",
-            "reason": "not_watched",
-        }
-
-    # =====================================================
-    # 查找已有通知
-    # =====================================================
-
-    notification = db.scalar(
-        select(
-            Notification
-        )
-        .where(
-            Notification.user_id
-            == user.id,
-
-            Notification.news_id
-            == news.id,
-
-            Notification.asset_id
-            == asset.id,
-
-            Notification.category
-            == "news_alert",
-        )
-    )
-
-    # 已经成功发送过
-    if (
-        notification is not None
-        and notification.status
-        == "sent"
-    ):
-
-        return {
-            "status": "duplicate",
-            "notification_id":
-                notification.id,
-        }
-
-    message = (
-        build_news_alert_message(
-            asset=asset,
-            news=news,
-            impact=impact,
-        )
-    )
-
-    # =====================================================
-    # 没有记录就创建
-    # =====================================================
-
-    if notification is None:
-
-        notification = Notification(
-            user_id=user.id,
-            asset_id=asset.id,
-            rule_id=None,
-            news_id=news.id,
-            category="news_alert",
-            title=(
-                f"{asset.symbol} "
-                "高影响新闻"
-            ),
-            message=message,
-            channel="telegram",
-            status="pending",
-        )
-
-        db.add(
-            notification
-        )
-
-        db.flush()
-
-    else:
-
-        # 之前发送失败，
-        # 允许下一次重新尝试
-
-        notification.message = (
-            message
-        )
-
-        notification.status = (
-            "pending"
-        )
-
-    # =====================================================
-    # Telegram
-    # =====================================================
-
-    try:
-
-        sent = (
-            send_telegram_message(
-                message
+    message = build_news_alert_message(asset=asset, news=news, impact=impact)
+    outcomes = []
+    for watch in watches:
+        user = db.get(User, watch.user_id)
+        if user is None:
+            continue
+        notification = db.scalar(select(Notification).where(
+            Notification.user_id == user.id,
+            Notification.news_id == news.id,
+            Notification.asset_id == asset.id,
+            Notification.category == "news_alert",
+        ))
+        if notification is not None and notification.status in {"sent", "in_app"}:
+            outcomes.append(notification.status)
+            continue
+        if notification is None:
+            notification = Notification(
+                user_id=user.id, asset_id=asset.id, rule_id=None, news_id=news.id,
+                category="news_alert", title=f"{asset.symbol} 高影响新闻",
+                message=message, channel="in_app", status="in_app",
             )
-        )
-
-        if not sent:
-
-            raise RuntimeError(
-                "Telegram message "
-                "send failed"
-            )
-
-        notification.status = (
-            "sent"
-        )
-
-        notification.sent_at = (
-            datetime.now(
-                timezone.utc
-            )
-        )
-
-        print(
-            "[NEWS TELEGRAM SENT] "
-            f"{asset.symbol} | "
-            f"News ID={news.id} | "
-            f"Notification ID="
-            f"{notification.id}"
-        )
-
-        return {
-            "status": "sent",
-            "notification_id":
-                notification.id,
-        }
-
-    except Exception as error:
-
-        notification.status = (
-            "failed"
-        )
-
-        print(
-            "[NEWS TELEGRAM FAILED] "
-            f"{asset.symbol} | "
-            f"News ID={news.id} | "
-            f"{type(error).__name__}: "
-            f"{error}"
-        )
-
-        return {
-            "status": "failed",
-            "notification_id":
-                notification.id,
-            "error":
-                type(error).__name__,
-        }
+            db.add(notification)
+            db.flush()
+        else:
+            notification.message = message
+        target = user.telegram_chat_id or (CHAT_ID if user.username == "default" else None)
+        if not target:
+            notification.channel = "in_app"
+            notification.status = "in_app"
+            outcomes.append("in_app")
+            continue
+        notification.channel = "telegram"
+        try:
+            if not send_telegram_message(message, chat_id=target):
+                raise RuntimeError("Telegram message send failed")
+            notification.status = "sent"
+            notification.sent_at = datetime.now(timezone.utc)
+            outcomes.append("sent")
+        except Exception as error:
+            notification.status = "failed"
+            outcomes.append("failed")
+            print(f"[NEWS TELEGRAM FAILED] {asset.symbol} | News ID={news.id} | {type(error).__name__}: {error}")
+    return {"status": "processed", "users": len(outcomes), "outcomes": outcomes}

@@ -82,6 +82,8 @@ def request_json(
         headers={
             "Accept":
                 "application/json",
+            "X-Radar-Worker-Token":
+                os.getenv("RADAR_WORKER_TOKEN", ""),
         },
     )
 
@@ -101,7 +103,7 @@ def load_watched_news_assets():
 
     url = (
         f"{API_BASE_URL}"
-        "/api/watchlist"
+        "/api/internal/news-watchlist"
     )
 
     data = request_json(

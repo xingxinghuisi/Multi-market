@@ -23,6 +23,10 @@ __pycache__/
 .venv/
 .venv_clean/
 .venv_test/
+.local-tmp/
+.pytest_cache/
+pytest-cache-files-*/
+test-results/
 
 # Logs
 *.log

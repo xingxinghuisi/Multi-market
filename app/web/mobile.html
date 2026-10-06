@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f5f7f3">
+  <meta name="color-scheme" content="light dark">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="description" content="MIRAO · 让每一次市场变化，都清晰可见。">
+  <title>MIRAO</title>
+  <script>try{const choice=localStorage.getItem("radar.theme");document.documentElement.dataset.theme=choice==="light"||choice==="dark"?choice:matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";}catch{document.documentElement.dataset.theme=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";}</script>
+  <link rel="icon" href="/static/radar-icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/static/radar-192.png">
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="stylesheet" href="/static/mobile.css">
+  <script type="module" src="/static/mobile.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#content">跳到内容</a>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#home"><span class="brand-mark" aria-hidden="true">M</span><span>MIRAO<small>MARKETS IN FOCUS</small></span></a>
+      <div class="top-actions"><span id="connection" class="connection" role="status">正在连接</span><a class="icon-button" href="#notifications" aria-label="通知中心" data-icon="bell"></a><a class="avatar" href="#profile" aria-label="个人中心">MI</a></div>
+    </header>
+    <div id="network-banner" class="network-banner" role="status" hidden></div>
+    <main id="content" tabindex="-1"><div class="empty">正在载入你的市场…</div></main>
+    <nav class="glass-nav" aria-label="主导航">
+      <span class="nav-indicator" aria-hidden="true"></span>
+      <a href="#home" data-page="home"><span data-icon="home"></span><span>总览</span></a>
+      <a href="#watchlist" data-page="watchlist"><span data-icon="star"></span><span>关注</span></a>
+      <a href="#news" data-page="news"><span data-icon="news"></span><span>新闻</span></a>
+      <a href="#alerts" data-page="alerts"><span data-icon="bell"></span><span>提醒</span></a>
+      <a href="#profile" data-page="profile"><span data-icon="user"></span><span>我的</span></a>
+    </nav>
+    <div id="toast" class="toast" role="status" hidden></div>
+  </div>
+  <noscript><p>请启用 JavaScript 来查看行情和管理关注列表。</p></noscript>
+</body>
+</html>
