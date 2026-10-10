@@ -91,6 +91,26 @@ class AlertRuleUpdate(BaseModel):
     enabled: bool | None = None
 
 # =========================================================
+# 推送订阅
+# =========================================================
+
+SubscriptionType = Literal[
+    "longshort_digest",
+    "whale_print",
+]
+
+
+class SubscriptionUpsert(BaseModel):
+
+    asset_id: int
+
+    alert_type: SubscriptionType
+
+    enabled: bool = True
+
+    config: dict | None = None
+
+# =========================================================
 # Asset
 # =========================================================
 

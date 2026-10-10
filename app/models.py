@@ -2,6 +2,7 @@ from datetime import date, datetime, timezone
 
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Date,
     DateTime,
@@ -279,11 +280,77 @@ class AlertRule(Base):
 
 
 # =========================================================
+# 推送订阅
+#
+# 用户 × 币种 × 提醒类型 的订阅开关。
+#
+# alert_type 取值：
+#   longshort_digest  1H 多空播报（整点推送）
+#   whale_print       巨鲸大单（单笔成交超阈值推送）
+#
+# config 为 JSON，存放各类型阈值，例如：
+#   {"whale_min_usd": 8000, "cooldown_seconds": 300}
+# =========================================================
+
+class AlertSubscription(Base):
+
+    __tablename__ = "alert_subscriptions"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "asset_id",
+            "alert_type",
+            name="uq_subscription_user_asset_type",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"),
+        nullable=False,
+        index=True,
+    )
+
+    asset_id: Mapped[int] = mapped_column(
+        ForeignKey("assets.id"),
+        nullable=False,
+        index=True,
+    )
+
+    alert_type: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        index=True,
+    )
+
+    enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+    )
+
+    config: Mapped[dict | None] = mapped_column(
+        JSON,
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = (
+        mapped_column(
+            DateTime(timezone=True),
+            default=utc_now,
+        )
+    )
+
+
+# =========================================================
 # Alert Engine 状态
 # =========================================================
 
 class AlertState(Base):
-
     __tablename__ = "alert_states"
 
     id: Mapped[int] = mapped_column(

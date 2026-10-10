@@ -143,8 +143,8 @@ def install_auth(app, get_db):
                 return JSONResponse({"detail": "Forbidden"}, status_code=403)
             return await call_next(request)
         public_auth = path in {"/api/auth/login", "/api/auth/register"}
-        private_read = path.startswith(("/api/watchlist", "/api/alert-rules", "/api/notifications",
-                                        "/api/client-profile", "/api/client-assets"))
+        private_read = path.startswith(("/api/watchlist", "/api/alert-rules", "/api/subscriptions",
+                                        "/api/notifications", "/api/client-profile", "/api/client-assets"))
         guarded = path.startswith("/api/") and ((method not in {"GET", "HEAD", "OPTIONS"} and not public_auth) or private_read)
         if public_auth and not _origin_ok(request):
             return JSONResponse({"detail": "Invalid request origin"}, status_code=403)

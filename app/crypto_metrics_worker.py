@@ -109,8 +109,14 @@ def is_contract_segment(
 
 
 def load_watched_contract_assets():
+    # 推送名单来源：推送订阅表（alert_type=longshort_digest）。
+    # 原来读的是观察名单全部启用合约（"一刀切"），现改为只推订阅了的币。
     response = requests.get(
-        f"{API_BASE_URL}/api/internal/default-contract-watchlist",
+        f"{API_BASE_URL}/api/internal/subscriptions",
+        params={
+            "alert_type":
+                "longshort_digest",
+        },
         headers={"X-Radar-Worker-Token": os.getenv("RADAR_WORKER_TOKEN", "")},
         timeout=REQUEST_TIMEOUT,
     )
@@ -124,7 +130,7 @@ def load_watched_contract_assets():
         list,
     ):
         raise RuntimeError(
-            "Watchlist API did not "
+            "Subscriptions API did not "
             "return a list"
         )
 
@@ -132,22 +138,6 @@ def load_watched_contract_assets():
     seen_symbols = set()
 
     for item in data:
-
-        if not item.get(
-            "enabled",
-            False,
-        ):
-            continue
-
-        asset_type = str(
-            item.get(
-                "asset_type",
-                "",
-            )
-        ).lower()
-
-        if asset_type != "crypto":
-            continue
 
         venue = str(
             item.get(

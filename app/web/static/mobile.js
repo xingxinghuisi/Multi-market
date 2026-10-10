@@ -1,5 +1,5 @@
 import {escapeHTML as e, number as n, percent, timestamp, safeURL, kind, marketMatches, candleSeries, alertPayload} from "./mobile-core.js";
-const APP_VERSION = "2026.09.28.4";
+const APP_VERSION = "2026.09.28.5";
 
 const $ = selector => document.querySelector(selector);
 const content = $("#content");
@@ -34,10 +34,10 @@ function applyTheme(choice=themeChoice()) {
 }
 systemTheme.addEventListener?.("change",()=>{if(themeChoice()==="system")applyTheme();});
 applyTheme();
-const state = {assets:[], quotes:[], watchlist:[], hiddenAssets:[], alerts:[], news:[], notifications:[], profile:null, bot:null, telegramChallengeSent:false, session:null,
+const state = {assets:[], quotes:[], watchlist:[], hiddenAssets:[], alerts:[], subs:[], alertTab:store.get("alertTab","rules")==="subs"?"subs":"rules", subSheet:false, subSearch:"", subOpen:new Set(), news:[], notifications:[], profile:null, bot:null, telegramChallengeSent:false, session:null,
   errors:{}, loading:true, filter:"all", newsFilter:"all", notificationFilter:"all", detail:new Map(), searchResults:[], searchSequence:0,
   refreshSeconds:[15,30,60].includes(Number(store.get("refresh", "30")))?Number(store.get("refresh", "30")):30, refreshing:false, socket:null, socketUp:false, lastSync:null};
-const endpoints = {assets:"/api/assets", quotes:"/api/market/latest", watchlist:"/api/watchlist", hiddenAssets:"/api/client-assets/hidden", alerts:"/api/alert-rules", news:"/api/news?limit=100", notifications:"/api/notifications?limit=100", profile:"/api/client-profile"};
+const endpoints = {assets:"/api/assets", quotes:"/api/market/latest", watchlist:"/api/watchlist", hiddenAssets:"/api/client-assets/hidden", alerts:"/api/alert-rules", subs:"/api/subscriptions", news:"/api/news?limit=100", notifications:"/api/notifications?limit=100", profile:"/api/client-profile"};
 const operatorNames = {crossing_up:"向上突破",crossing_down:"向下跌破",step:"每变动"};
 const timeText = value => timestamp(value)?.toLocaleString("zh-CN",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}) ?? "时间未提供";
 const changeClass = value => value == null ? "muted" : Number(value) >= 0 ? "up" : "down";
@@ -80,7 +80,7 @@ async function request(url, {method="GET", body, signal}={}) {
       const error = new Error(`请求失败（${response.status}）：${detail}`);
       error.status = response.status;
       if(response.status===401&&state.session&&url!=="/api/auth/login") {
-        state.session=null;state.watchlist=[];state.hiddenAssets=[];state.alerts=[];state.notifications=[];state.profile=null;
+        state.session=null;state.watchlist=[];state.hiddenAssets=[];state.alerts=[];state.subs=[];state.notifications=[];state.profile=null;
         state.socket?.close();location.hash="login";
       }
       throw error;
@@ -95,7 +95,7 @@ async function request(url, {method="GET", body, signal}={}) {
 async function load(keys) {
   await Promise.all(keys.map(async key=>{
     try{state[key]=await request(endpoints[key]);delete state.errors[key];if(key==="quotes")state.lastSync=new Date();}
-    catch(error){state.errors[key]=`${({assets:"资产",quotes:"行情",watchlist:"关注列表",hiddenAssets:"个人目录",alerts:"提醒规则",news:"新闻",notifications:"通知",profile:"账户"})[key]}加载失败。${error.message}`;}
+    catch(error){state.errors[key]=`${({assets:"资产",quotes:"行情",watchlist:"关注列表",hiddenAssets:"个人目录",alerts:"提醒规则",subs:"推送订阅",news:"新闻",notifications:"通知",profile:"账户"})[key]}加载失败。${error.message}`;}
   }));
   updateConnection();
 }
@@ -163,7 +163,43 @@ function catalog() {
     `<div class="card list-card">${assetRows(assets,Infinity,"catalog")}</div><p class="quote-caption">删除资产会从你的目录和关注中移除，并暂停该资产的提醒；其他用户的数据不受影响。可通过“添加资产”重新加入。</p>`;
 }
 function alerts() {
-  return heading("价格提醒","STAY ONE STEP AHEAD",linkButton("#create-alert","＋ 创建提醒",true))+errorBox("alerts")+`<div class="card">${state.alerts.length?state.alerts.map(rule=>`<article class="rule"><div class="rule-head"><div><h3><a href="#asset/${rule.asset.id}">${e(rule.asset.symbol)}</a> <span class="tag">${kind(rule.asset)}</span></h3><p>${e(({price:"价格",change_pct:"涨跌幅",price_change:"价格变化"})[rule.metric]||rule.metric)}${e(operatorNames[rule.operator]||rule.operator)} <strong>${n(rule.value,8)} ${rule.metric==="change_pct"?"%":e(rule.asset.currency)}</strong></p><small>冷却 ${rule.cooldown_seconds} 秒${rule.operator==="step"?` · 初始锚点 ${n(rule.step_anchor,8)}`:""}</small></div><span class="tag">${rule.enabled?"监控中":"已暂停"}</span></div><div class="actions"><button data-action="toggle-alert" data-id="${rule.id}">${rule.enabled?"暂停":"启用"}</button><button class="danger" data-action="delete-alert" data-id="${rule.id}">删除</button></div></article>`).join(""):empty("还没有价格提醒","选择已关注资产，设置你的第一个触发条件。",linkButton("#create-alert","创建提醒"))}</div><div class="notice">提醒由现有行情服务触发，Telegram 由服务端配置发送。当前未接入手机系统推送。</div>`;
+  const tab=state.alertTab==="subs"?"subs":"rules";
+  const seg=`<div class="seg-tabs" role="tablist" aria-label="提醒类型"><button data-action="alert-tab" data-tab="rules" role="tab" aria-selected="${tab==="rules"}" class="${tab==="rules"?"active":""}">价格提醒</button><button data-action="alert-tab" data-tab="subs" role="tab" aria-selected="${tab==="subs"}" class="${tab==="subs"?"active":""}">推送订阅</button></div>`;
+  if(tab==="subs")return subscriptionsPage(seg);
+  return heading("价格提醒","STAY ONE STEP AHEAD",linkButton("#create-alert","＋ 创建提醒",true))+seg+errorBox("alerts")+`<div class="card">${state.alerts.length?state.alerts.map(rule=>`<article class="rule"><div class="rule-head"><div><h3><a href="#asset/${rule.asset.id}">${e(rule.asset.symbol)}</a> <span class="tag">${kind(rule.asset)}</span></h3><p>${e(({price:"价格",change_pct:"涨跌幅",price_change:"价格变化"})[rule.metric]||rule.metric)}${e(operatorNames[rule.operator]||rule.operator)} <strong>${n(rule.value,8)} ${rule.metric==="change_pct"?"%":e(rule.asset.currency)}</strong></p><small>冷却 ${rule.cooldown_seconds} 秒${rule.operator==="step"?` · 初始锚点 ${n(rule.step_anchor,8)}`:""}</small></div><span class="tag">${rule.enabled?"监控中":"已暂停"}</span></div><div class="actions"><button data-action="toggle-alert" data-id="${rule.id}">${rule.enabled?"暂停":"启用"}</button><button class="danger" data-action="delete-alert" data-id="${rule.id}">删除</button></div></article>`).join(""):empty("还没有价格提醒","选择已关注资产，设置你的第一个触发条件。",linkButton("#create-alert","创建提醒"))}</div><div class="notice">提醒由现有行情服务触发，Telegram 由服务端配置发送。当前未接入手机系统推送。</div>`;
+}
+const subTypeNames={longshort_digest:"1H 多空播报",whale_print:"巨鲸大单"};
+function subGroups() {
+  const map=new Map();
+  for(const s of state.subs) {
+    let g=map.get(s.asset.id);
+    if(!g){g={asset:s.asset,byType:{}};map.set(s.asset.id,g);}
+    g.byType[s.alert_type]=s;
+  }
+  return [...map.values()];
+}
+function subPool() {
+  const existing=new Set(state.subs.map(s=>s.asset.id));
+  const q=state.subSearch.trim().toLowerCase();
+  return state.assets.filter(a=>a.enabled!==false&&a.asset_type==="crypto"&&a.venue==="BINANCE"&&/FUTURES|PERPETUAL/i.test(a.segment||"")&&!existing.has(a.id)&&(!q||a.symbol.toLowerCase().includes(q)||(a.name||"").toLowerCase().includes(q)));
+}
+function subCard(g) {
+  const{asset,byType}=g,digest=byType.longshort_digest,whale=byType.whale_print;
+  const on=!!(digest?.enabled||whale?.enabled);
+  const threshold=whale?.config?.whale_min_usd??50000;
+  return `<details class="card sub-card" data-asset="${asset.id}"${state.subOpen.has(asset.id)?" open":""}><summary class="sub-head"><span class="sub-title"><h3>${e(asset.symbol)} <span class="tag">${kind(asset)}</span></h3><span class="muted">${e(asset.name)}</span></span><span class="sub-status${on?"":" off"}"><span class="dot"></span>${on?"订阅中":"未订阅"}</span><button class="sub-del" data-action="sub-delete" data-id="${asset.id}" aria-label="删除 ${e(asset.symbol)} 的订阅">×</button><span class="sub-chev">▾</span></summary><div class="sub-detail"><div class="sub-row"><div class="lb">${subTypeNames.longshort_digest}<small>整点推送多空比数据</small></div><label class="switch"><input type="checkbox" data-sub-toggle="longshort_digest" data-asset="${asset.id}"${digest?.enabled?" checked":""}><span class="tr"></span></label></div><div class="sub-row"><div class="lb">${subTypeNames.whale_print}<small>单笔成交超过阈值即提醒</small></div><span class="thr">≥ <input type="number" min="0" step="any" inputmode="decimal" value="${e(String(threshold))}" data-sub-threshold="${asset.id}"${whale?.enabled?"":" disabled"}> U</span><label class="switch"><input type="checkbox" data-sub-toggle="whale_print" data-asset="${asset.id}"${whale?.enabled?" checked":""}><span class="tr"></span></label></div></div></details>`;
+}
+function subscriptionsPage(seg) {
+  const groups=subGroups();
+  const onCount=groups.filter(g=>g.byType.longshort_digest?.enabled||g.byType.whale_print?.enabled).length;
+  return heading("推送订阅","STAY ONE STEP AHEAD",`<span class="tag">${onCount} / ${groups.length} 已订阅</span>`)+seg+errorBox("subs")+(groups.length?`<div class="sub-grid">${groups.map(subCard).join("")}</div><button class="sub-add" data-action="sub-add-open">＋ 添加币种</button>`:empty("还没有推送订阅","为合约币种开启 1H 多空播报或巨鲸大单提醒。")+`<button class="sub-add" data-action="sub-add-open">＋ 添加币种</button>`)+`<p class="quote-caption">修改即时保存；1H 多空播报在下一个整点按订阅名单推送，巨鲸大单实时推送。价格步进类提醒请前往「价格提醒」页。</p>`+subSheet();
+}
+function poolRows(pool) {
+  return pool.length?pool.map(a=>`<div class="prow"><div class="inf"><b>${e(a.symbol)}</b><small>${e(a.name)} · 合约</small></div><button class="plus" data-action="sub-add" data-id="${a.id}" aria-label="添加 ${e(a.symbol)}">＋</button></div>`).join(""):`<div class="empty"><strong>没有匹配的币种</strong><p>可从资产目录先添加该合约。</p></div>`;
+}
+function subSheet() {
+  if(!state.subSheet)return "";
+  return `<div class="sheet-mask"><div class="sheet" role="dialog" aria-label="添加币种"><div class="grab"></div><h3>添加币种</h3><p class="sheet-sub">从已启用的 Binance 合约中选择；默认开启巨鲸大单（阈值 50000 U），1H 多空播报关闭。</p><input class="search" id="sub-search" placeholder="搜索币种，如 SOL" value="${e(state.subSearch)}" autocomplete="off"><div class="plist" id="sub-pool-list">${poolRows(subPool())}</div></div></div>`;
 }
 function createAlert(id) {
   const options=state.watchlist.filter(a=>a.enabled!==false&&a.price_alerts_enabled);
@@ -304,10 +340,10 @@ async function refresh() {
   if(state.refreshing||!state.session||document.hidden||!navigator.onLine)return;
   state.refreshing=true;
   try {
-    const before=JSON.stringify([state.assets,state.watchlist,state.hiddenAssets,state.alerts,state.news,state.notifications,state.profile,state.errors]);
+    const before=JSON.stringify([state.assets,state.watchlist,state.hiddenAssets,state.alerts,state.subs,state.news,state.notifications,state.profile,state.errors]);
     await load(Object.keys(endpoints));
     paintQuotes();
-    if(before!==JSON.stringify([state.assets,state.watchlist,state.hiddenAssets,state.alerts,state.news,state.notifications,state.profile,state.errors])&&
+    if(before!==JSON.stringify([state.assets,state.watchlist,state.hiddenAssets,state.alerts,state.subs,state.news,state.notifications,state.profile,state.errors])&&
        ["home","watchlist","catalog","asset","alerts","news","notifications","profile","settings"].includes(current().page)&&!interacting())render();
     const {page,id}=current();
     const asset=state.assets.find(a=>a.id===id);
@@ -324,6 +360,13 @@ async function mutate(button,operation,keys) {
   finally {button.disabled=false;}
 }
 content.addEventListener("click",async event=>{
+  const summary=event.target.closest("summary.sub-head");
+  if(summary){
+    const card=summary.closest("details.sub-card"),assetId=Number(card.dataset.asset);
+    setTimeout(()=>{if(card.isConnected){if(card.open)state.subOpen.add(assetId);else state.subOpen.delete(assetId);}},0);
+  }
+  const mask=event.target.closest(".sheet-mask");
+  if(mask&&!event.target.closest(".sheet")){state.subSheet=false;state.subSearch="";render();return;}
   const button=event.target.closest("button");if(!button)return;
   if(button.dataset.themeChoice){
     store.set("theme",button.dataset.themeChoice);
@@ -335,10 +378,11 @@ content.addEventListener("click",async event=>{
     if(button.dataset[attribute]!==undefined){state[key]=button.dataset[attribute];render();return;}
   }
   const {action,id}=button.dataset;
+  if(action==="alert-tab"){state.alertTab=button.dataset.tab==="subs"?"subs":"rules";store.set("alertTab",state.alertTab);render();return;}
   if(action==="start"){store.set("welcome","seen");location.hash=state.session?"home":"login";}
   if(action==="logout")await mutate(button,async()=>{
     await request("/api/auth/logout",{method:"POST"});state.session=null;
-    state.watchlist=[];state.hiddenAssets=[];state.alerts=[];state.notifications=[];state.profile=null;state.bot=null;
+    state.watchlist=[];state.hiddenAssets=[];state.alerts=[];state.subs=[];state.notifications=[];state.profile=null;state.bot=null;
     state.socket?.close();location.hash="login";toast("已退出登录");
   },[]);
   if(action==="retry"){button.disabled=true;await load(Object.keys(endpoints));render();}
@@ -374,12 +418,70 @@ content.addEventListener("click",async event=>{
     },["assets","watchlist","hiddenAssets","quotes"]);
   }
   if(action==="install"&&installPrompt){await installPrompt.prompt();installPrompt=null;button.hidden=true;}
+  if(action==="sub-add-open"){state.subSheet=true;state.subSearch="";render();const input=$("#sub-search");input?.focus();return;}
+  if(action==="sub-add"){
+    const assetId=Number(id);
+    await mutate(button,async()=>{
+      await request("/api/subscriptions",{method:"PUT",body:{asset_id:assetId,alert_type:"whale_print",enabled:true,config:{whale_min_usd:50000}}});
+      state.subSheet=false;state.subSearch="";
+      toast("已添加订阅");
+    },["subs"]);
+    return;
+  }
+  if(action==="sub-delete"){
+    event.preventDefault();
+    const assetId=Number(id);
+    const asset=state.assets.find(a=>a.id===assetId);
+    if(!confirm(`删除 ${asset?asset.symbol:"该币种"} 的全部推送订阅？`))return;
+    await mutate(button,async()=>{
+      for(const s of state.subs.filter(x=>x.asset.id===assetId))await request(`/api/subscriptions/${s.id}`,{method:"DELETE"});
+      state.subOpen.delete(assetId);
+    },["subs"]);
+    return;
+  }
 });
-content.addEventListener("change",event=>{
+content.addEventListener("change",async event=>{
+  const subToggle=event.target.closest?event.target.closest("[data-sub-toggle]"):null;
+  if(subToggle){
+    const assetId=Number(subToggle.dataset.asset),alertType=subToggle.dataset.subToggle,on=subToggle.checked;
+    const existing=state.subs.find(s=>s.asset.id===assetId&&s.alert_type===alertType);
+    const config=existing?.config||(alertType==="whale_print"?{whale_min_usd:50000}:{});
+    subToggle.disabled=true;
+    try{
+      await request("/api/subscriptions",{method:"PUT",body:{asset_id:assetId,alert_type:alertType,enabled:on,config}});
+      await load(["subs"]);render();
+      const card=content.querySelector(`details.sub-card[data-asset="${assetId}"]`);if(card)card.open=true;
+      toast(on?"已开启":"已关闭");
+    }catch(error){toast(error.message);if(subToggle.isConnected)subToggle.checked=!on;}
+    finally{if(subToggle.isConnected)subToggle.disabled=false;}
+    return;
+  }
+  const subThreshold=event.target.closest?event.target.closest("[data-sub-threshold]"):null;
+  if(subThreshold){
+    const assetId=Number(subThreshold.dataset.subThreshold),value=parseFloat(subThreshold.value);
+    if(!(value>0)){toast("请输入有效的阈值");return;}
+    const existing=state.subs.find(s=>s.asset.id===assetId&&s.alert_type==="whale_print");
+    subThreshold.disabled=true;
+    try{
+      await request("/api/subscriptions",{method:"PUT",body:{asset_id:assetId,alert_type:"whale_print",enabled:existing?.enabled??true,config:{...(existing?.config||{}),whale_min_usd:value}}});
+      await load(["subs"]);render();
+      const card=content.querySelector(`details.sub-card[data-asset="${assetId}"]`);if(card)card.open=true;
+      toast("阈值已保存");
+    }catch(error){toast(error.message);}
+    finally{if(subThreshold.isConnected)subThreshold.disabled=false;}
+    return;
+  }
   if(event.target.name==="operator") {
     const step=event.target.value==="step";$("#anchor-field").hidden=!step;$("[name=step_anchor]").required=step;$("#value-label").textContent=step?"价格步长":"目标价格";
   }
   if(event.target.name==="market"){state.searchSequence++;state.searchResults=[];$("#search-results").textContent="市场已切换，请重新搜索。";}
+});
+content.addEventListener("input",event=>{
+  if(event.target.id==="sub-search"){
+    state.subSearch=event.target.value;
+    const list=$("#sub-pool-list");
+    if(list)list.innerHTML=poolRows(subPool());
+  }
 });
 content.addEventListener("submit",async event=>{
   event.preventDefault();const form=event.target, values=Object.fromEntries(new FormData(form));

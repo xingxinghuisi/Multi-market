@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from models import AlertRule, Asset, Notification, TelegramChallenge, User, UserHiddenAsset, WatchlistItem
+from models import AlertRule, AlertSubscription, Asset, Notification, TelegramChallenge, User, UserHiddenAsset, WatchlistItem
 from crypto_metrics import get_futures_metrics
 from telegram_service import BOT_TOKEN, CHAT_ID, get_bot_username, send_telegram_message
 
@@ -224,3 +224,26 @@ def install_mobile_routes(app, get_db, get_default_user, read_binance_json):
                  "asset_type": asset.asset_type, "venue": asset.venue,
                  "segment": asset.segment, "provider": asset.provider,
                  "enabled": asset.enabled} for asset in rows]
+
+    @app.get("/api/internal/subscriptions")
+    def internal_subscriptions(alert_type: str = Query(...), db=Depends(get_db)):
+        """Worker 用：返回指定提醒类型下所有启用的推送订阅。"""
+        rows = db.execute(
+            select(AlertSubscription, Asset, User)
+            .join(Asset, AlertSubscription.asset_id == Asset.id)
+            .join(User, AlertSubscription.user_id == User.id)
+            .where(AlertSubscription.alert_type == alert_type,
+                   AlertSubscription.enabled.is_(True))
+            .order_by(AlertSubscription.id)
+        ).all()
+        return [{
+            "subscription_id": sub.id,
+            "user_id": user.id,
+            "telegram_chat_id": user.telegram_chat_id,
+            "asset_id": asset.id,
+            "symbol": asset.symbol,
+            "name": asset.name,
+            "venue": asset.venue,
+            "segment": asset.segment,
+            "config": sub.config or {},
+        } for (sub, asset, user) in rows]
