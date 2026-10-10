@@ -46,6 +46,27 @@ UTC8 = timezone(
     timedelta(hours=8)
 )
 
+# Retry the same completed hour; never substitute incomplete or older data.
+RETRY_SECONDS = 60
+MAX_ATTEMPTS = 11
+
+
+class IncompleteHourData(RuntimeError):
+    pass
+
+
+class InvalidSourceResponse(RuntimeError):
+    pass
+
+
+def error_detail(error):
+    """Log useful diagnostics without request URLs, headers or credentials."""
+    if isinstance(error, (IncompleteHourData, InvalidSourceResponse)):
+        return f"{type(error).__name__}: {error}"
+    if isinstance(error, requests.HTTPError) and error.response is not None:
+        return f"HTTPError status={error.response.status_code}"
+    return type(error).__name__
+
 
 CONTRACT_SEGMENTS = {
     "FUTURES",
@@ -126,7 +147,7 @@ def fetch_binance_rows(endpoint, symbol, read_json=None):
         response.raise_for_status()
         data = response.json()
     if not isinstance(data, list):
-        raise RuntimeError("Binance did not return a list")
+        raise InvalidSourceResponse("Binance did not return a list")
     return data
 
 
@@ -187,10 +208,8 @@ def direction_arrow(
     return "↓"
 
 
-def build_hour_targets():
-    now_utc = datetime.now(
-        timezone.utc
-    )
+def build_hour_targets(now_utc=None):
+    now_utc = now_utc or datetime.now(timezone.utc)
 
     # 当前整点。
     # 例如现在 22:02，
@@ -229,11 +248,9 @@ def build_hour_targets():
 
 
 def fetch_metrics(
-    symbol, read_json=None,
+    symbol, read_json=None, targets=None,
 ):
-    targets = (
-        build_hour_targets()
-    )
+    targets = targets or build_hour_targets()
 
     hour_start = targets[
         "hour_start"
@@ -356,7 +373,7 @@ def fetch_metrics(
     ]
 
     if missing:
-        raise RuntimeError(
+        raise IncompleteHourData(
             "missing completed "
             "1H data: "
             + ", ".join(
@@ -590,28 +607,60 @@ def build_message(
     )
 
 
-def run_once(dry_run=False):
+def run_once(dry_run=False, targets=None, completed=None):
+    completed = completed if completed is not None else set()
+    retry_needed = False
     grouped = {}
     for sub in load_watched_contract_assets():
-        grouped.setdefault(sub["symbol"], []).append(sub)
+        if sub["subscription_id"] not in completed:
+            grouped.setdefault(sub["symbol"], []).append(sub)
     for symbol, subscriptions in grouped.items():
         try:
-            metrics = fetch_metrics(symbol)
+            metrics = fetch_metrics(symbol, targets=targets) if targets is not None else fetch_metrics(symbol)
             message = build_message(symbol, metrics)
             event_key = f"digest:{symbol}:{metrics['hour_end'].isoformat()}"
         except Exception as error:
-            log(f"SKIP {symbol}: {type(error).__name__}")
+            log(f"RETRY {symbol}: {error_detail(error)}")
+            retry_needed = True
             continue
         for sub in subscriptions:
             if dry_run:
                 print(f"subscription={sub['subscription_id']}\n{message}")
+                completed.add(sub["subscription_id"])
                 continue
             try:
                 result = submit_event(sub["subscription_id"], event_key,
                                       f"{symbol} · 1H 多空播报", message)
                 log(f"{symbol} subscription={sub['subscription_id']} status={result.get('status')}")
+                if result.get("status") in {"sent", "in_app", "inactive", "invalid_config", "duplicate"}:
+                    completed.add(sub["subscription_id"])
+                else:
+                    retry_needed = True
             except Exception as error:
-                log(f"Delivery failed: {type(error).__name__}")
+                log(f"Delivery failed subscription={sub['subscription_id']}: {error_detail(error)}")
+                retry_needed = True
+    return retry_needed
+
+
+def run_hour(dry_run=False, targets=None):
+    targets = targets or build_hour_targets()
+    completed = set()
+    # Even a late catch-up must finish before the following hour becomes due.
+    deadline = targets["hour_end"] + timedelta(hours=1, minutes=PUSH_MINUTE)
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            retry_needed = run_once(dry_run, targets, completed)
+        except Exception as error:
+            log(f"Subscription cycle failed: {error_detail(error)}")
+            retry_needed = True
+        if not retry_needed:
+            return True
+        if attempt == MAX_ATTEMPTS or datetime.now(timezone.utc) + timedelta(seconds=RETRY_SECONDS) >= deadline:
+            break
+        log(f"Retry same hour={targets['hour_end'].isoformat()} in {RETRY_SECONDS}s; attempt={attempt + 1}/{MAX_ATTEMPTS}")
+        time.sleep(RETRY_SECONDS)
+    log(f"Hour incomplete after bounded retries: {targets['hour_end'].isoformat()}")
+    return False
 
 
 
@@ -648,8 +697,17 @@ def run_forever(
         f"HH:{PUSH_MINUTE:02d}"
     )
 
+    # Restarts can recover the latest due hour. The API's durable event key
+    # suppresses deliveries already accepted before this process restarted.
+    last_hour = None
     while True:
-
+        now = datetime.now(timezone.utc)
+        targets = build_hour_targets(now)
+        due = targets["hour_end"] + timedelta(minutes=PUSH_MINUTE)
+        if now >= due and targets["hour_end"] != last_hour:
+            run_hour(dry_run=dry_run, targets=targets)
+            last_hour = targets["hour_end"]
+            continue
         next_run = (
             next_run_time()
         )
@@ -678,19 +736,6 @@ def run_forever(
         time.sleep(
             sleep_seconds
         )
-
-        try:
-            run_once(
-                dry_run=dry_run
-            )
-
-        except Exception as error:
-            log(
-                "Worker cycle error | "
-                f"{type(error).__name__}: "
-                f"{error}"
-            )
-
 
 def main():
     parser = (

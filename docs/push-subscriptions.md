@@ -14,6 +14,7 @@
 
 - 仅支持 Binance USD-M / USDT 合约；Spot、股票、币本位合约不接入本轮订阅。
 - 1H 播报复用现有完整小时数据计算，默认每小时第 2 分钟运行；沿用 `CRYPTO_METRICS_PUSH_MINUTE` 配置。相同币种每轮只请求一次源数据，再逐个投递给订阅用户。
+- 数据缺失、请求失败或投递失败时，每 60 秒重试同一小时，最多 11 次（首次加 10 次重试），并在下一个小时任务到期前停止。已成功的订阅不重复提交，失败的投递沿用同一事件键；不使用不完整数据替代。日志显示缺失的数据项或 HTTP 状态码，不输出请求凭据。重启时补查最近已到播报时间的小时，API 持久化记录抑制已投递事件；不自动补发更早的小时。
 - 巨鲸监听读取 Binance `aggTrade` 聚合成交，按用户独立阈值和冷却判断。它只能识别大额聚合成交，不能识别真实钱包，也不将主动买卖差额当作资金净流入。
 - 监听每 15 秒刷新订阅，市场没有成交时也会刷新。API 在投递时再次检查最新开关、阈值和数据库冷却；取消或提高阈值无需等待 worker 缓存刷新才生效。
 - 接收目标只在 API 内解析。只有旧 `default` 账户保留服务器默认 Chat ID 的兼容行为。
@@ -74,3 +75,5 @@ Startup adds subscription and delivery tables without replacing existing data. A
 Deploy the API and both subscription workers together using the existing Docker Compose environment and data volume. Aggregated trades do not identify individual whales or wallets. The current deployment assumes one API process; multi-process cooldown coordination requires a shared lock or queue.
 
 The market worker uses the Moomoo SDK's asynchronous connection mode so an unavailable OpenD cannot block Binance streams. Each source retries independently, including sources with no assets at startup. Deploy this isolation fix by rebuilding the app image and recreating only `market_worker`; leave OpenD stopped while account login is rate-limited.
+
+Hourly reports now retry unavailable data and failed deliveries every 60 seconds, up to 11 attempts, keeping the original completed hour and stable event key. Successful recipients are skipped on retries. Restart catch-up checks the latest due hour; durable API records suppress already delivered events. Missing fields and HTTP status codes are logged without credentials. Older hours are not automatically backfilled. This worker-only fix requires rebuilding the image and recreating `crypto_metrics_worker`; no schema or API change is needed.
