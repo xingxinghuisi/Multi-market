@@ -4,6 +4,7 @@ Run from app/: python tests/browser_mobile.py
 Requires playwright + an installed Chromium browser. Never runs market/news workers.
 """
 import socket
+import os
 import sys
 import threading
 import time
@@ -70,6 +71,8 @@ def main():
     listener = socket.socket()
     listener.bind(("127.0.0.1", requested_port))
     port = listener.getsockname()[1]
+    # Tests/previews use this local origin even when the host has production env configured.
+    os.environ["RADAR_PUBLIC_ORIGIN"] = f"http://127.0.0.1:{port}"
     server = uvicorn.Server(uvicorn.Config(api.app, log_level="error", lifespan="off"))
     thread = threading.Thread(target=lambda: server.run(sockets=[listener]), daemon=True)
     thread.start()

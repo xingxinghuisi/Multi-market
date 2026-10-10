@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 
 # =========================================================
@@ -109,6 +109,29 @@ class SubscriptionUpsert(BaseModel):
     enabled: bool = True
 
     config: dict | None = None
+
+    @model_validator(mode="after")
+    def validate_config(self):
+        if self.config is not None:
+            if self.alert_type == "whale_print":
+                self.config = WhaleConfig.model_validate(self.config).model_dump()
+            elif self.config:
+                raise ValueError("1H 多空播报不支持自定义配置")
+        return self
+
+
+class WhaleConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    whale_min_usd: float = Field(default=50000, gt=0, le=1e12)
+    cooldown_seconds: int = Field(default=300, ge=0, le=86400)
+
+
+class SubscriptionEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    event_key: str = Field(min_length=1, max_length=120, pattern=r"^[A-Za-z0-9:_.+-]+$")
+    title: str = Field(min_length=1, max_length=200)
+    message: str = Field(min_length=1, max_length=4000)
+    notional_usd: float | None = Field(default=None, gt=0, le=1e15)
 
 # =========================================================
 # Asset

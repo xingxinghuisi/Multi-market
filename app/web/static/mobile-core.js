@@ -19,7 +19,10 @@ export function safeURL(value) {
 }
 export function kind(asset) {
   if (asset.asset_type !== "crypto") return "股票";
-  return /FUTURES|PERPETUAL/i.test(asset.segment) ? "合约" : "Spot";
+  return /FUTURE|PERPETUAL/i.test(asset.segment) || ["USD_M","USD-M","CONTRACT","SWAP"].includes(asset.segment) ? "合约" : "Spot";
+}
+export function supportsSubscriptions(asset) {
+  return asset.asset_type==="crypto" && asset.venue==="BINANCE" && asset.currency==="USDT" && kind(asset)==="合约";
 }
 export function marketMatches(asset, filter) {
   return filter === "all" || (filter === "crypto" && asset.asset_type === "crypto") ||

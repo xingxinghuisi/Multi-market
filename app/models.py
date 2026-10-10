@@ -894,6 +894,18 @@ class Notification(Base):
     )
 
 
+class SubscriptionDelivery(Base):
+    """Idempotency and cooldown survive worker restarts; notification history is independent."""
+
+    __tablename__ = "subscription_deliveries"
+    __table_args__ = (UniqueConstraint("subscription_id", "event_key", name="uq_subscription_event"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    subscription_id: Mapped[int] = mapped_column(
+        ForeignKey("alert_subscriptions.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_key: Mapped[str] = mapped_column(String(120), nullable=False)
+    notification_id: Mapped[int] = mapped_column(ForeignKey("notifications.id"), nullable=False)
+
+
 class UserHiddenAsset(Base):
     """A user's removed catalog entry; the shared market asset stays intact."""
 

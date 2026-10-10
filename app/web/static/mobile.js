@@ -1,10 +1,11 @@
-import {escapeHTML as e, number as n, percent, timestamp, safeURL, kind, marketMatches, candleSeries, alertPayload} from "./mobile-core.js";
-const APP_VERSION = "2026.09.28.5";
+import {escapeHTML as e, number as n, percent, timestamp, safeURL, kind, marketMatches, candleSeries, alertPayload, supportsSubscriptions} from "./mobile-core.js";
+const APP_VERSION = "2026.10.11.1";
 
 const $ = selector => document.querySelector(selector);
 const content = $("#content");
 $(".skip-link").addEventListener("click", event => {event.preventDefault(); content.focus();});
-const interacting = () => (document.activeElement !== content && content.contains(document.activeElement)) || !!content.querySelector("details[open]");
+let pendingWrites = 0;
+const interacting = () => pendingWrites > 0 || (document.activeElement !== content && content.contains(document.activeElement)) || !!content.querySelector("details[open]");
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const nav = $(".glass-nav");
 const navIndicator = $(".nav-indicator");
@@ -65,6 +66,8 @@ function toast(text) {
 }
 
 async function request(url, {method="GET", body, signal}={}) {
+  const writing = !["GET","HEAD","OPTIONS"].includes(method);
+  if(writing)pendingWrites++;
   const controller = new AbortController();
   const timer=setTimeout(()=>controller.abort(),20000);
   const abort=()=>controller.abort();
@@ -89,7 +92,10 @@ async function request(url, {method="GET", body, signal}={}) {
   } catch(error) {
     if(error.name === "AbortError") throw new Error("请求超时，请检查连接后重试。");
     throw error;
-  } finally {clearTimeout(timer);signal?.removeEventListener("abort",abort);}
+  } finally {
+    clearTimeout(timer);signal?.removeEventListener("abort",abort);
+    if(writing){pendingWrites--;setTimeout(applyAppUpdate,0);}
+  }
 }
 
 async function load(keys) {
@@ -181,25 +187,30 @@ function subGroups() {
 function subPool() {
   const existing=new Set(state.subs.map(s=>s.asset.id));
   const q=state.subSearch.trim().toLowerCase();
-  return state.assets.filter(a=>a.enabled!==false&&a.asset_type==="crypto"&&a.venue==="BINANCE"&&/FUTURES|PERPETUAL/i.test(a.segment||"")&&!existing.has(a.id)&&(!q||a.symbol.toLowerCase().includes(q)||(a.name||"").toLowerCase().includes(q)));
+  return visibleAssets().filter(a=>supportsSubscriptions(a)&&!existing.has(a.id)&&(!q||a.symbol.toLowerCase().includes(q)||(a.name||"").toLowerCase().includes(q)));
 }
 function subCard(g) {
-  const{asset,byType}=g,digest=byType.longshort_digest,whale=byType.whale_print;
+  const {asset,byType}=g,digest=byType.longshort_digest,whale=byType.whale_print;
   const on=!!(digest?.enabled||whale?.enabled);
-  const threshold=whale?.config?.whale_min_usd??50000;
-  return `<details class="card sub-card" data-asset="${asset.id}"${state.subOpen.has(asset.id)?" open":""}><summary class="sub-head"><span class="sub-title"><h3>${e(asset.symbol)} <span class="tag">${kind(asset)}</span></h3><span class="muted">${e(asset.name)}</span></span><span class="sub-status${on?"":" off"}"><span class="dot"></span>${on?"订阅中":"未订阅"}</span><button class="sub-del" data-action="sub-delete" data-id="${asset.id}" aria-label="删除 ${e(asset.symbol)} 的订阅">×</button><span class="sub-chev">▾</span></summary><div class="sub-detail"><div class="sub-row"><div class="lb">${subTypeNames.longshort_digest}<small>整点推送多空比数据</small></div><label class="switch"><input type="checkbox" data-sub-toggle="longshort_digest" data-asset="${asset.id}"${digest?.enabled?" checked":""}><span class="tr"></span></label></div><div class="sub-row"><div class="lb">${subTypeNames.whale_print}<small>单笔成交超过阈值即提醒</small></div><span class="thr">≥ <input type="number" min="0" step="any" inputmode="decimal" value="${e(String(threshold))}" data-sub-threshold="${asset.id}"${whale?.enabled?"":" disabled"}> U</span><label class="switch"><input type="checkbox" data-sub-toggle="whale_print" data-asset="${asset.id}"${whale?.enabled?" checked":""}><span class="tr"></span></label></div></div></details>`;
+  const threshold=whale?.config?.whale_min_usd??50000,cooldown=whale?.config?.cooldown_seconds??300;
+  return `<details class="card sub-card" data-asset="${asset.id}"${state.subOpen.has(asset.id)?" open":""}><summary class="sub-head"><span class="sub-title"><h3>${e(asset.symbol)} <span class="tag">${kind(asset)}</span></h3><span class="muted">${e(asset.name)}</span></span><span class="sub-status${on?"":" off"}"><span class="dot"></span>${on?"订阅中":"未订阅"}</span><button class="sub-del" data-action="sub-delete" data-id="${asset.id}" aria-label="删除 ${e(asset.symbol)} 的订阅">×</button><span class="sub-chev">▾</span></summary><div class="sub-detail">
+  <div class="sub-row"><div class="lb">${subTypeNames.longshort_digest}<small>每小时推送完整周期的多空数据</small></div><label class="switch"><input aria-label="${e(asset.symbol)} 1H 多空播报" type="checkbox" data-sub-toggle="longshort_digest" data-asset="${asset.id}"${digest?.enabled?" checked":""}><span class="tr"></span></label></div>
+  <div class="sub-row"><div class="lb">${subTypeNames.whale_print}<small>Binance 聚合成交达到阈值时提醒</small></div><label class="switch"><input aria-label="${e(asset.symbol)} 巨鲸大单" type="checkbox" data-sub-toggle="whale_print" data-asset="${asset.id}"${whale?.enabled?" checked":""}><span class="tr"></span></label></div>
+  <div class="sub-row"><label class="lb" for="whale-threshold-${asset.id}">大额成交阈值（USDT）</label><span class="thr"><input id="whale-threshold-${asset.id}" type="number" min="0.01" max="1000000000000" step="any" inputmode="decimal" value="${e(String(threshold))}" data-sub-threshold="${asset.id}"${whale?.enabled?"":" disabled"}></span></div>
+  <div class="sub-row"><label class="lb" for="whale-cooldown-${asset.id}">提醒间隔（秒）<small>每个币种独立；0 表示不设间隔</small></label><span class="thr"><input id="whale-cooldown-${asset.id}" type="number" min="0" max="86400" step="1" inputmode="numeric" value="${e(String(cooldown))}" data-sub-cooldown="${asset.id}"${whale?.enabled?"":" disabled"}></span></div>
+  ${[whale,digest].some(s=>s?.config_valid===false)?'<p class="notice error">旧订阅配置无效，请重新保存阈值和提醒间隔。</p>':""}<a class="inline-link" href="#asset/${asset.id}">查看行情与多空数据 →</a></div></details>`;
 }
 function subscriptionsPage(seg) {
   const groups=subGroups();
   const onCount=groups.filter(g=>g.byType.longshort_digest?.enabled||g.byType.whale_print?.enabled).length;
-  return heading("推送订阅","STAY ONE STEP AHEAD",`<span class="tag">${onCount} / ${groups.length} 已订阅</span>`)+seg+errorBox("subs")+(groups.length?`<div class="sub-grid">${groups.map(subCard).join("")}</div><button class="sub-add" data-action="sub-add-open">＋ 添加币种</button>`:empty("还没有推送订阅","为合约币种开启 1H 多空播报或巨鲸大单提醒。")+`<button class="sub-add" data-action="sub-add-open">＋ 添加币种</button>`)+`<p class="quote-caption">修改即时保存；1H 多空播报在下一个整点按订阅名单推送，巨鲸大单实时推送。价格步进类提醒请前往「价格提醒」页。</p>`+subSheet();
+  return heading("推送订阅","STAY ONE STEP AHEAD",`<span class="tag">${onCount} / ${groups.length} 已订阅</span>`)+seg+errorBox("subs")+(!state.profile?.telegram_configured?'<div class="notice">尚未绑定 Telegram，提醒会保存在站内通知中心。<a class="inline-link" href="#settings">绑定 Telegram →</a></div>':"")+(groups.length?`<div class="sub-grid">${groups.map(subCard).join("")}</div><button class="sub-add" data-action="sub-add-open">＋ 添加币种</button>`:empty("还没有推送订阅","为合约币种开启 1H 多空播报或巨鲸大单提醒。")+`<button class="sub-add" data-action="sub-add-open">＋ 添加币种</button>`)+`<p class="quote-caption">修改即时保存；巨鲸监听通常在 15 秒内更新，投递时会再次检查开关与阈值。1H 播报在每小时第 2 分钟读取完整周期数据。巨鲸大单表示聚合成交，无法识别真实钱包。价格步进类提醒请前往「价格提醒」页。</p>`+subSheet();
 }
 function poolRows(pool) {
   return pool.length?pool.map(a=>`<div class="prow"><div class="inf"><b>${e(a.symbol)}</b><small>${e(a.name)} · 合约</small></div><button class="plus" data-action="sub-add" data-id="${a.id}" aria-label="添加 ${e(a.symbol)}">＋</button></div>`).join(""):`<div class="empty"><strong>没有匹配的币种</strong><p>可从资产目录先添加该合约。</p></div>`;
 }
 function subSheet() {
   if(!state.subSheet)return "";
-  return `<div class="sheet-mask"><div class="sheet" role="dialog" aria-label="添加币种"><div class="grab"></div><h3>添加币种</h3><p class="sheet-sub">从已启用的 Binance 合约中选择；默认开启巨鲸大单（阈值 50000 U），1H 多空播报关闭。</p><input class="search" id="sub-search" placeholder="搜索币种，如 SOL" value="${e(state.subSearch)}" autocomplete="off"><div class="plist" id="sub-pool-list">${poolRows(subPool())}</div></div></div>`;
+  return `<div class="sheet-mask"><div class="sheet" role="dialog" aria-modal="true" aria-label="添加币种"><div class="grab"></div><div class="section-title"><h3>添加币种</h3><button data-action="sub-add-close" aria-label="关闭添加币种">关闭</button></div><p class="sheet-sub">从资产目录的 Binance USDT 合约中选择；默认开启巨鲸大单（阈值 50000 U），1H 多空播报关闭。</p><input class="search" id="sub-search" placeholder="搜索币种，如 SOL" value="${e(state.subSearch)}" autocomplete="off"><div class="plist" id="sub-pool-list">${poolRows(subPool())}</div></div></div>`;
 }
 function createAlert(id) {
   const options=state.watchlist.filter(a=>a.enabled!==false&&a.price_alerts_enabled);
@@ -208,7 +219,7 @@ function createAlert(id) {
 function notifications() {
   const rows=state.notifications.filter(row=>state.notificationFilter==="all"||row.category===state.notificationFilter);
   const categories=[...new Set(state.notifications.map(row=>row.category))];
-  return heading("通知中心","NOTIFICATIONS")+`<div class="filters"><button data-notification-filter="all" class="${state.notificationFilter==="all"?"active":""}">全部</button>${categories.map(category=>`<button data-notification-filter="${e(category)}" class="${state.notificationFilter===category?"active":""}">${e(({price:"价格提醒",news:"新闻提醒",price_alert:"价格提醒",news_alert:"新闻提醒"})[category]||category)}</button>`).join("")}</div>`+errorBox("notifications")+`<div class="card">${rows.length?rows.map(row=>`<article class="news-item"><div class="news-meta"><span class="tag">${e(row.channel)}</span><span>${timeText(row.created_at)}</span><span>${e(({sent:"已发送",failed:"发送失败",pending:"待发送",in_app:"站内记录"})[row.status]||row.status)}</span></div><h3>${e(row.title)}</h3><p class="notification-text">${e(row.message)}</p>${row.asset_id?`<a class="inline-link" href="#asset/${row.asset_id}">查看资产 →</a>`:""}</article>`).join(""):empty("暂无通知记录","真实的价格和新闻提醒触发后会显示在这里。")}</div><p class="quote-caption">显示最近 100 条通知。发送状态来自服务端，不代表设备已读。</p>`;
+  return heading("通知中心","NOTIFICATIONS")+`<div class="filters"><button data-notification-filter="all" class="${state.notificationFilter==="all"?"active":""}">全部</button>${categories.map(category=>`<button data-notification-filter="${e(category)}" class="${state.notificationFilter===category?"active":""}">${e(({price:"价格提醒",news:"新闻提醒",price_alert:"价格提醒",news_alert:"新闻提醒",longshort_digest:"1H 多空播报",whale_print:"巨鲸大单"})[category]||category)}</button>`).join("")}</div>`+errorBox("notifications")+`<div class="card">${rows.length?rows.map(row=>`<article class="news-item"><div class="news-meta"><span class="tag">${e(row.channel)}</span><span>${timeText(row.created_at)}</span><span>${e(({sent:"已发送",failed:"发送失败",pending:"待发送",in_app:"站内记录"})[row.status]||row.status)}</span></div><h3>${e(row.title)}</h3><p class="notification-text">${e(row.message)}</p>${row.asset_id?`<a class="inline-link" href="#asset/${row.asset_id}">查看资产 →</a>`:""}</article>`).join(""):empty("暂无通知记录","价格、新闻、多空播报和巨鲸提醒触发后会显示在这里。")}</div><p class="quote-caption">显示最近 100 条通知。发送状态来自服务端，不代表设备已读。</p>`;
 }
 function news() {
   const rows=state.news.filter(row=>{
@@ -248,13 +259,23 @@ function futuresMetrics(asset, detail) {
   return `<div class="section-title"><h2>合约指标</h2><small>Binance USD-M</small></div><div class="card">${kv([["标记价格",n(metrics?.mark_price,8)],["指数价格",n(metrics?.index_price,8)],["最新资金费率",funding],["未平仓量",n(metrics?.open_interest,4)],["下次资金费时间",metrics?.next_funding_time?timeText(metrics.next_funding_time):"—"]])}<p class="quote-caption">标记价格与资金费率更新时间：${metrics?.premium_time?timeText(metrics.premium_time):"未提供"}${stale?" · 数据可能已过期":""}；未平仓量更新时间：${metrics?.open_interest_time?timeText(metrics.open_interest_time):"未提供"}。资金费率直接取自 Binance，未平仓量按 Binance 返回的原始数量显示。</p>${note || (!metrics ? '<p class="quote-caption">正在读取 Binance 公开合约数据…</p>' : "")}</div>`;
 }
 
+function longshortPanel(asset, detail) {
+  if(!supportsSubscriptions(asset))return "";
+  const data=detail?.longshort;
+  const rows=[["全市场账户多空比","global"],["大户账户多空比","top_account"],["大户持仓多空比","top_position"],["主动买卖比","taker"]];
+  return '<div class="section-title"><h2>1H 多空数据</h2><a href="#alerts" data-action-link="subscriptions">管理订阅 →</a></div><div class="card">'+
+    (detail?.longshortError?`<div class="notice error">${e(detail.longshortError)} <button data-action="detail-retry" data-id="${asset.id}">重试</button></div>`:data?
+      kv(rows.map(([label,key])=>[label,`${n(data.ratios[key]?.current,4)} · 上期 ${n(data.ratios[key]?.previous,4)}`]))+
+      kv([["多头账户占比",data.long_account_pct==null?"—":`${n(data.long_account_pct)}%`],["空头账户占比",data.short_account_pct==null?"—":`${n(data.short_account_pct)}%`]])+
+      `<p class="quote-caption">周期：${timeText(data.hour_start)} — ${timeText(data.hour_end)} · ${e(data.source)}。完整周期数据，非实时价格。</p>`:empty("正在读取完整 1H 数据…"))+'</div>';
+}
 function detail(id) {
   const d=state.detail.get(id),asset=state.assets.find(a=>a.id===id)||d?.asset||state.watchlist.find(a=>a.asset_id===id);
   if(!asset)return back()+heading("资产详情")+(d?.error?`<div class="notice error">${e(d.error)} <button data-action="detail-retry" data-id="${id}">重试</button></div>`:empty("正在读取资产…"));
   const q=quoteFor(id)||d?.quote, type=kind(asset), stamp=timestamp(q?.event_time),old=stamp&&Date.now()-stamp.getTime()>15*60*1000;
   const animateChart = Boolean(d?.history?.length && !d.chartShown && !reducedMotion.matches);
   if (d?.history?.length) d.chartShown = true;
-  return back("#watchlist","返回关注列表")+`<div class="page-heading"><div class="detail-title"><span class="asset-avatar ${asset.asset_type==="crypto"?"crypto":""}">${e(asset.symbol.slice(0,2))}</span><div><h1>${e(asset.symbol)}</h1><small>${e(asset.name)} · ${e(asset.venue)} · ${type}</small></div></div><button data-action="follow" data-id="${id}" aria-pressed="${followed(id)}">${followed(id)?"★ 已关注":"☆ 关注"}</button></div><div class="grid-two"><section><div class="card"><span class="tag">${type==="合约"?"Crypto · 合约":type==="Spot"?"Crypto · Spot":"股票行情"}</span><div class="quote-large"><span data-detail-price="${id}">${n(q?.price,8)}</span> <small>${e(asset.currency)}</small></div><span data-detail-change class="${changeClass(q?.change_pct)}">${percent(q?.change_pct)}　${q?.change_amount!=null?n(q.change_amount,8):""}</span><p class="quote-caption">${q?`报价时间 ${timeText(q.event_time)}${old?" · 历史快照 / 可能已收市":""}`:"尚无报价，等待行情服务采集。"}</p>${d?.quoteError?`<div class="notice error">${e(d.quoteError)}</div>`:""}<div class="section-title"><h3>历史走势</h3><span class="tag">最近 30 个交易日</span></div>${d?.historyError?`<div class="notice error">${e(d.historyError)} <button data-action="detail-retry" data-id="${id}">重试</button></div>`:d?.history?chart(d.history, animateChart):empty("正在加载历史行情…")}</div><div class="actions">${followed(id)?linkButton(`#create-alert/${id}`,`${icon("bell")} 创建价格提醒`,true):'<span class="muted">关注后可创建价格提醒</span>'}</div></section><section><div class="section-title"><h2>${type==="合约"?"合约行情":type==="Spot"?"现货行情":"交易数据"}</h2></div><div class="card">${kv([["开盘",n(q?.open,8)],["最高",n(q?.high,8)],["最低",n(q?.low,8)],["成交量",n(q?.volume)],["成交额",n(q?.quote_volume)],["涨跌基准价",n(q?.reference_price,8)]])}<p class="quote-caption">基准：${e(q?.reference_type||"未提供")} · ${e(q?.reference_timezone||"时区未提供")}</p>${type==="股票"?kv([["交易时段",q?.market_session||"未提供"],["常规时段",n(q?.regular_price,8)],["盘前",n(q?.pre_price,8)],["盘后",n(q?.after_price,8)],["隔夜",n(q?.overnight_price,8)]]):""}</div>${type==="合约"?futuresMetrics(asset,d):""}<div class="section-title"><h2>相关新闻</h2><a href="#news">全部 ↗</a></div><div class="card list-card">${d?.newsError?`<div class="notice error">${e(d.newsError)}</div>`:d?.news?newsRows(d.news,5):empty("正在加载新闻…")}</div></section></div>`;
+  return back("#watchlist","返回关注列表")+`<div class="page-heading"><div class="detail-title"><span class="asset-avatar ${asset.asset_type==="crypto"?"crypto":""}">${e(asset.symbol.slice(0,2))}</span><div><h1>${e(asset.symbol)}</h1><small>${e(asset.name)} · ${e(asset.venue)} · ${type}</small></div></div><button data-action="follow" data-id="${id}" aria-pressed="${followed(id)}">${followed(id)?"★ 已关注":"☆ 关注"}</button></div><div class="grid-two"><section><div class="card"><span class="tag">${type==="合约"?"Crypto · 合约":type==="Spot"?"Crypto · Spot":"股票行情"}</span><div class="quote-large"><span data-detail-price="${id}">${n(q?.price,8)}</span> <small>${e(asset.currency)}</small></div><span data-detail-change class="${changeClass(q?.change_pct)}">${percent(q?.change_pct)}　${q?.change_amount!=null?n(q.change_amount,8):""}</span><p class="quote-caption">${q?`报价时间 ${timeText(q.event_time)}${old?" · 历史快照 / 可能已收市":""}`:"尚无报价，等待行情服务采集。"}</p>${d?.quoteError?`<div class="notice error">${e(d.quoteError)}</div>`:""}<div class="section-title"><h3>历史走势</h3><span class="tag">最近 30 个交易日</span></div>${d?.historyError?`<div class="notice error">${e(d.historyError)} <button data-action="detail-retry" data-id="${id}">重试</button></div>`:d?.history?chart(d.history, animateChart):empty("正在加载历史行情…")}</div><div class="actions">${followed(id)?linkButton(`#create-alert/${id}`,`${icon("bell")} 创建价格提醒`,true):'<span class="muted">关注后可创建价格提醒</span>'}</div></section><section><div class="section-title"><h2>${type==="合约"?"合约行情":type==="Spot"?"现货行情":"交易数据"}</h2></div><div class="card">${kv([["开盘",n(q?.open,8)],["最高",n(q?.high,8)],["最低",n(q?.low,8)],["成交量",n(q?.volume)],["成交额",n(q?.quote_volume)],["涨跌基准价",n(q?.reference_price,8)]])}<p class="quote-caption">基准：${e(q?.reference_type||"未提供")} · ${e(q?.reference_timezone||"时区未提供")}</p>${type==="股票"?kv([["交易时段",q?.market_session||"未提供"],["常规时段",n(q?.regular_price,8)],["盘前",n(q?.pre_price,8)],["盘后",n(q?.after_price,8)],["隔夜",n(q?.overnight_price,8)]]):""}</div>${type==="合约"?futuresMetrics(asset,d)+longshortPanel(asset,d):""}<div class="section-title"><h2>相关新闻</h2><a href="#news">全部 ↗</a></div><div class="card list-card">${d?.newsError?`<div class="notice error">${e(d.newsError)}</div>`:d?.news?newsRows(d.news,5):empty("正在加载新闻…")}</div></section></div>`;
 }
 async function loadDetail(id) {
   if(!Number.isInteger(id)||id<=0)return;
@@ -277,8 +298,10 @@ async function loadDetail(id) {
 async function loadMetrics(id) {
   const d=state.detail.get(id);
   if(!d)return;
-  try {d.metrics=await request(`/api/assets/${id}/crypto-metrics`);delete d.metricsError;}
-  catch(error){d.metricsError=error.message;}
+  await Promise.all([["metrics","crypto-metrics"],["longshort","longshort-metrics"]].map(async([key,path])=>{
+    try{d[key]=await request(`/api/assets/${id}/${path}`);delete d[`${key}Error`];}
+    catch(error){delete d[key];d[`${key}Error`]=error.message;}
+  }));
   if(current().page==="asset"&&current().id===id&&!interacting())render();
 }
 function addAsset() {
@@ -360,6 +383,8 @@ async function mutate(button,operation,keys) {
   finally {button.disabled=false;}
 }
 content.addEventListener("click",async event=>{
+  if(event.target.closest('[data-action-link="subscriptions"]')){state.alertTab="subs";store.set("alertTab","subs");}
+
   const summary=event.target.closest("summary.sub-head");
   if(summary){
     const card=summary.closest("details.sub-card"),assetId=Number(card.dataset.asset);
@@ -418,12 +443,13 @@ content.addEventListener("click",async event=>{
     },["assets","watchlist","hiddenAssets","quotes"]);
   }
   if(action==="install"&&installPrompt){await installPrompt.prompt();installPrompt=null;button.hidden=true;}
+  if(action==="sub-add-close"){state.subSheet=false;state.subSearch="";render();return;}
   if(action==="sub-add-open"){state.subSheet=true;state.subSearch="";render();const input=$("#sub-search");input?.focus();return;}
   if(action==="sub-add"){
     const assetId=Number(id);
     await mutate(button,async()=>{
       await request("/api/subscriptions",{method:"PUT",body:{asset_id:assetId,alert_type:"whale_print",enabled:true,config:{whale_min_usd:50000}}});
-      state.subSheet=false;state.subSearch="";
+      state.subSheet=false;state.subSearch="";state.subOpen.add(assetId);
       toast("已添加订阅");
     },["subs"]);
     return;
@@ -449,24 +475,25 @@ content.addEventListener("change",async event=>{
     subToggle.disabled=true;
     try{
       await request("/api/subscriptions",{method:"PUT",body:{asset_id:assetId,alert_type:alertType,enabled:on,config}});
-      await load(["subs"]);render();
+      state.subOpen.add(assetId);await load(["subs"]);render();
       const card=content.querySelector(`details.sub-card[data-asset="${assetId}"]`);if(card)card.open=true;
       toast(on?"已开启":"已关闭");
     }catch(error){toast(error.message);if(subToggle.isConnected)subToggle.checked=!on;}
     finally{if(subToggle.isConnected)subToggle.disabled=false;}
     return;
   }
-  const subThreshold=event.target.closest?event.target.closest("[data-sub-threshold]"):null;
+  const subThreshold=event.target.closest?event.target.closest("[data-sub-threshold], [data-sub-cooldown]"):null;
   if(subThreshold){
-    const assetId=Number(subThreshold.dataset.subThreshold),value=parseFloat(subThreshold.value);
-    if(!(value>0)){toast("请输入有效的阈值");return;}
+    const isCooldown=subThreshold.dataset.subCooldown!==undefined;
+    const assetId=Number(isCooldown?subThreshold.dataset.subCooldown:subThreshold.dataset.subThreshold),value=Number(subThreshold.value);
+    if(!subThreshold.value||!Number.isFinite(value)||(isCooldown?(!Number.isInteger(value)||value<0||value>86400):(value<=0||value>1e12))){toast(isCooldown?"请输入 0–86400 的整数秒":"请输入大于 0 的有效阈值");return;}
     const existing=state.subs.find(s=>s.asset.id===assetId&&s.alert_type==="whale_print");
     subThreshold.disabled=true;
     try{
-      await request("/api/subscriptions",{method:"PUT",body:{asset_id:assetId,alert_type:"whale_print",enabled:existing?.enabled??true,config:{...(existing?.config||{}),whale_min_usd:value}}});
-      await load(["subs"]);render();
+      await request("/api/subscriptions",{method:"PUT",body:{asset_id:assetId,alert_type:"whale_print",enabled:existing?.enabled??true,config:{...(existing?.config||{}),[isCooldown?"cooldown_seconds":"whale_min_usd"]:value}}});
+      state.subOpen.add(assetId);await load(["subs"]);render();
       const card=content.querySelector(`details.sub-card[data-asset="${assetId}"]`);if(card)card.open=true;
-      toast("阈值已保存");
+      toast(isCooldown?"提醒间隔已保存":"阈值已保存");
     }catch(error){toast(error.message);}
     finally{if(subThreshold.isConnected)subThreshold.disabled=false;}
     return;
@@ -580,6 +607,7 @@ window.addEventListener("beforeinstallprompt",event=>{event.preventDefault();ins
 try {state.session=await request("/api/auth/session");} catch {state.session=null;}
 if(!location.hash)history.replaceState(null,"",state.session?"#home":"#login");
 if(current().page==="account")history.replaceState(null,"","#login");
+if(state.session&&["login","register"].includes(current().page))history.replaceState(null,"","#home");
 if(!state.session&&!(["login","register","welcome"].includes(current().page)))history.replaceState(null,"","#login");
 if(state.session)await load(Object.keys(endpoints));
 state.loading=false;
@@ -599,3 +627,14 @@ if("serviceWorker" in navigator&&window.isSecureContext) {
     setInterval(check,10*60*1000);
   }).catch(()=>{if(current().page==="settings")toast("离线支持未启用；仍可正常在线使用。");});
 }
+
+document.addEventListener("keydown",event=>{
+  if(!state.subSheet)return;
+  if(event.key==="Escape"){state.subSheet=false;state.subSearch="";render();return;}
+  if(event.key==="Tab"){
+    const controls=[...content.querySelectorAll('.sheet button:not(:disabled),.sheet input:not(:disabled)')];
+    const first=controls[0],last=controls.at(-1);
+    if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}
+    else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}
+  }
+});

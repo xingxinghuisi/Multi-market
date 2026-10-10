@@ -1,728 +1,176 @@
+"""Observe Binance USD-M aggregated trades and fan out to account-owned subscriptions."""
 import argparse
 import asyncio
+from collections import deque
+from datetime import datetime, timedelta, timezone
 import json
+import math
 import os
 import time
 
-from collections import (
-    deque,
-)
-
-from datetime import (
-    datetime,
-    timedelta,
-    timezone,
-)
-
-import requests
 import websockets
 
-from telegram_service import (
-    send_telegram_message,
-)
+from subscription_client import load_subscriptions as load_rows, submit_event
 
-
-API_BASE_URL = os.getenv(
-    "MARKET_RADAR_API_URL",
-    "http://127.0.0.1:8000",
-).rstrip("/")
-
-BINANCE_WS_BASE = os.getenv(
-    "BINANCE_WS_BASE_URL",
-    "wss://fstream.binance.com",
-).rstrip("/")
-
-REQUEST_TIMEOUT = int(
-    os.getenv(
-        "WHALE_REQUEST_TIMEOUT",
-        "15",
-    )
-)
-
-# 订阅刷新间隔（秒）：
-# 轮询订阅表，发现币种/阈值变化后自动重连 WebSocket。
-SUB_REFRESH_SECONDS = int(
-    os.getenv(
-        "WHALE_SUB_REFRESH_SECONDS",
-        "300",
-    )
-)
-
-DEFAULT_WHALE_MIN_USD = float(
-    os.getenv(
-        "WHALE_DEFAULT_MIN_USD",
-        "50000",
-    )
-)
-
-DEFAULT_COOLDOWN_SECONDS = int(
-    os.getenv(
-        "WHALE_DEFAULT_COOLDOWN_SECONDS",
-        "300",
-    )
-)
-
-# 近 N 分钟净流入统计窗口
-FLOW_WINDOW_SECONDS = int(
-    os.getenv(
-        "WHALE_FLOW_WINDOW_SECONDS",
-        "300",
-    )
-)
-
-UTC8 = timezone(
-    timedelta(hours=8)
-)
+BINANCE_WS_BASE = os.getenv("BINANCE_WS_BASE_URL", "wss://fstream.binance.com").rstrip("/")
+SUB_REFRESH_SECONDS = 15
+FLOW_WINDOW_SECONDS = 300
+UTC8 = timezone(timedelta(hours=8))
 
 
 def log(message):
-    now = datetime.now(
-        UTC8
-    ).strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
-
-    print(
-        f"[WHALE PRINT] "
-        f"[{now}] "
-        f"{message}",
-        flush=True,
-    )
+    print(f"[WHALE] {message}", flush=True)
 
 
 def load_subscriptions():
-    """从推送订阅表读取 whale_print 订阅。
-
-    返回：
-        {symbol: {
-            "threshold_usd": float,
-            "cooldown_seconds": int,
-            "chat_id": str | None,
-        }}
-    """
-
-    response = requests.get(
-        f"{API_BASE_URL}/api/internal/subscriptions",
-        params={
-            "alert_type":
-                "whale_print",
-        },
-        headers={
-            "X-Radar-Worker-Token":
-                os.getenv(
-                    "RADAR_WORKER_TOKEN",
-                    "",
-                ),
-        },
-        timeout=REQUEST_TIMEOUT,
-    )
-
-    response.raise_for_status()
-
-    data = response.json()
-
-    if not isinstance(
-        data,
-        list,
-    ):
-        raise RuntimeError(
-            "Subscriptions API did not "
-            "return a list"
-        )
-
-    subscriptions = {}
-    seen_symbols = set()
-
-    for item in data:
-
-        symbol = str(
-            item.get(
-                "symbol",
-                "",
-            )
-        ).upper()
-
-        if not symbol:
-            continue
-
-        if symbol in seen_symbols:
-            continue
-
-        seen_symbols.add(
-            symbol
-        )
-
-        config = (
-            item.get(
-                "config"
-            )
-            or {}
-        )
-
-        try:
-            threshold_usd = float(
-                config.get(
-                    "whale_min_usd",
-                    DEFAULT_WHALE_MIN_USD,
-                )
-            )
-        except (
-            TypeError,
-            ValueError,
-        ):
-            threshold_usd = (
-                DEFAULT_WHALE_MIN_USD
-            )
-
-        try:
-            cooldown_seconds = int(
-                config.get(
-                    "cooldown_seconds",
-                    DEFAULT_COOLDOWN_SECONDS,
-                )
-            )
-        except (
-            TypeError,
-            ValueError,
-        ):
-            cooldown_seconds = (
-                DEFAULT_COOLDOWN_SECONDS
-            )
-
-        subscriptions[symbol] = {
-            "threshold_usd":
-                threshold_usd,
-            "cooldown_seconds":
-                max(
-                    0,
-                    cooldown_seconds,
-                ),
-            "chat_id":
-                item.get(
-                    "telegram_chat_id"
-                )
-                or None,
-        }
-
-    return subscriptions
+    grouped = {}
+    for row in load_rows("whale_print"):
+        grouped.setdefault(row["symbol"], []).append(row)
+    return grouped
 
 
-def format_usd(value):
-    return f"${value:,.0f}"
-
-
-def format_qty(value):
-
-    text = f"{value:,.4f}".rstrip(
-        "0"
-    ).rstrip(
-        "."
-    )
-
-    return text
-
-
-def format_flow(value):
-
-    sign = "+" if value >= 0 else "-"
-
-    return f"{sign}{format_usd(abs(value))}"
-
-
-def build_message(
-    symbol,
-    is_buy,
-    notional,
-    qty,
-    price,
-    net_flow,
-):
-
-    direction = (
-        "主动买入"
-        if is_buy
-        else "主动卖出"
-    )
-
-    now_text = datetime.now(
-        UTC8
-    ).strftime(
-        "%Y年%m月%d日 %H:%M:%S"
-    )
-
+def build_message(symbol, is_buy, notional, qty, price, net_flow, event_time, observed_seconds):
+    direction = "主动买入" if is_buy else "主动卖出"
+    stamp = datetime.fromtimestamp(event_time / 1000, UTC8).strftime("%Y-%m-%d %H:%M:%S")
     return (
-        f"🐋 {symbol} 大额成交 · "
-        f"{direction} "
-        f"{format_usd(notional)}\n"
-        f"\n"
-        f"{format_qty(qty)}张 @ "
-        f"{price:g}\n"
-        f"📊 近5分钟净流入 "
-        f"{format_flow(net_flow)}\n"
-        f"\n"
-        f"🕐 {now_text}\n"
-        f"\n"
-        f"Rule #3"
+        f"🐋 {symbol} 大额成交 · {direction} ${notional:,.0f}\n\n"
+        f"成交价：{price:g} USDT\n数量：{qty:g}（Binance 原始数量）\n"
+        f"已观测主动买卖差额：{net_flow:+,.0f} USDT\n"
+        f"统计窗口：最近 {observed_seconds} 秒（最多 5 分钟）\n\n"
+        f"🕐 {stamp}\n"
+        "来源：Binance USD-M 聚合成交；不代表单个钱包或真实资金净流入。"
     )
 
 
 class WhaleWatcher:
-
-    def __init__(
-        self,
-        subscriptions,
-    ):
-
-        self.subscriptions = (
-            subscriptions
-        )
-
-        # 每币最近成交：
-        # deque[(timestamp, notional, is_buy)]
-        self.recent_trades = {
-            symbol: deque()
-            for symbol in subscriptions
-        }
-
-        # 每币上次推送时间（冷却）
+    def __init__(self, subscriptions):
+        self.subscriptions = subscriptions
+        self.recent_trades = {}
+        self.observed_since = {}
+        self.flow_totals = {}
         self.last_alert_at = {}
+        self.last_trade_id = {}
+        self.retry_after = {}
 
-    def record_trade(
-        self,
-        symbol,
-        notional,
-        is_buy,
-        now,
-    ):
+    def replace_subscriptions(self, subscriptions):
+        self.subscriptions = subscriptions
+        active_ids = {row["subscription_id"] for rows in subscriptions.values() for row in rows}
+        for mapping in (self.last_alert_at, self.retry_after):
+            for key in list(mapping):
+                if key not in active_ids:
+                    del mapping[key]
+        for mapping in (self.recent_trades, self.observed_since, self.flow_totals, self.last_trade_id):
+            for symbol in list(mapping):
+                if symbol not in subscriptions:
+                    del mapping[symbol]
 
-        trades = self.recent_trades.get(
-            symbol
-        )
+    def reset_flow(self):
+        # A disconnected interval is missing data; never present it as a complete 5-minute window.
+        self.recent_trades.clear()
+        self.observed_since.clear()
+        self.flow_totals.clear()
 
-        if trades is None:
+    def handle_trade(self, data, dry_run=False):
+        symbol = str(data.get("s", "")).upper()
+        rows = tuple(self.subscriptions.get(symbol, ()))
+        if data.get("e") != "aggTrade" or not rows:
             return
-
-        trades.append(
-            (
-                now,
-                notional,
-                is_buy,
-            )
-        )
-
-        cutoff = (
-            now
-            - FLOW_WINDOW_SECONDS
-        )
-
-        while (
-            trades
-            and trades[0][0] < cutoff
-        ):
-            trades.popleft()
-
-    def net_flow(
-        self,
-        symbol,
-    ):
-
-        trades = self.recent_trades.get(
-            symbol,
-            (),
-        )
-
-        flow = 0.0
-
-        for (
-            _,
-            notional,
-            is_buy,
-        ) in trades:
-
-            flow += (
-                notional
-                if is_buy
-                else -notional
-            )
-
-        return flow
-
-    def should_alert(
-        self,
-        symbol,
-        notional,
-        now,
-    ):
-
-        config = self.subscriptions.get(
-            symbol
-        )
-
-        if config is None:
-            return False
-
-        if notional < config[
-            "threshold_usd"
-        ]:
-            return False
-
-        last = self.last_alert_at.get(
-            symbol,
-            0,
-        )
-
-        if (
-            now - last
-            < config["cooldown_seconds"]
-        ):
-            return False
-
-        self.last_alert_at[
-            symbol
-        ] = now
-
-        return True
-
-    def handle_trade(
-        self,
-        symbol,
-        price,
-        qty,
-        is_buy,
-    ):
-
-        now = time.time()
-
-        notional = (
-            price
-            * qty
-        )
-
-        self.record_trade(
-            symbol,
-            notional,
-            is_buy,
-            now,
-        )
-
-        if not self.should_alert(
-            symbol,
-            notional,
-            now,
-        ):
+        try:
+            price, qty = float(data["p"]), float(data["q"])
+            trade_id, event_time = int(data["a"]), int(data["T"])
+        except (KeyError, TypeError, ValueError, OverflowError):
             return
-
-        config = self.subscriptions[
-            symbol
-        ]
-
-        message = build_message(
-            symbol,
-            is_buy,
-            notional,
-            qty,
-            price,
-            self.net_flow(
-                symbol
-            ),
-        )
-
-        sent = send_telegram_message(
-            message,
-            chat_id=config["chat_id"],
-        )
-
-        if sent:
-
-            log(
-                f"ALERT {symbol} "
-                f"{'买' if is_buy else '卖'} "
-                f"{format_usd(notional)}"
-            )
-
-        else:
-
-            log(
-                f"ALERT FAILED {symbol} "
-                f"{format_usd(notional)}"
-            )
-
-
-async def watch_forever(
-    dry_run=False,
-):
-
-    backoff = 5
-
-    while True:
-
-        try:
-            subscriptions = (
-                load_subscriptions()
-            )
-        except Exception as error:
-
-            log(
-                "Load subscriptions failed | "
-                f"{type(error).__name__}: "
-                f"{error}"
-            )
-
-            await asyncio.sleep(
-                backoff
-            )
-
-            backoff = min(
-                backoff * 2,
-                60,
-            )
-
-            continue
-
-        if not subscriptions:
-
-            log(
-                "No whale_print subscriptions, "
-                "waiting..."
-            )
-
-            await asyncio.sleep(
-                SUB_REFRESH_SECONDS
-            )
-
-            continue
-
-        backoff = 5
-
-        try:
-
-            await watch_streams(
-                subscriptions,
-                dry_run=dry_run,
-            )
-
-        except Exception as error:
-
-            log(
-                "Stream error | "
-                f"{type(error).__name__}: "
-                f"{error}"
-            )
-
-        log(
-            f"Reconnecting in {backoff}s..."
-        )
-
-        await asyncio.sleep(
-            backoff
-        )
-
-        backoff = min(
-            backoff * 2,
-            60,
-        )
-
-
-async def watch_streams(
-    subscriptions,
-    dry_run=False,
-):
-
-    symbols = sorted(
-        subscriptions.keys()
-    )
-
-    streams = "/".join(
-        f"{symbol.lower()}@aggTrade"
-        for symbol in symbols
-    )
-
-    url = (
-        f"{BINANCE_WS_BASE}/stream"
-        f"?streams={streams}"
-    )
-
-    log(
-        "Subscribing: "
-        + ", ".join(symbols)
-    )
-
-    watcher = WhaleWatcher(
-        subscriptions
-    )
-
-    last_refresh = time.time()
-
-    # 断线自动重连由外层 watch_forever 负责。
-    async with websockets.connect(
-        url,
-        ping_interval=20,
-        ping_timeout=20,
-        close_timeout=10,
-    ) as websocket:
-
-        log(
-            "WebSocket connected"
-        )
-
-        async for raw_message in websocket:
-
-            try:
-                payload = json.loads(
-                    raw_message
-                )
-            except ValueError:
+        notional = price * qty
+        if not all(math.isfinite(v) and v > 0 for v in (price, qty, notional)) or event_time <= 0 or trade_id < 0:
+            return
+        if trade_id <= self.last_trade_id.get(symbol, -1):
+            return
+        self.last_trade_id[symbol] = trade_id
+        now = time.monotonic()
+        is_buy = not bool(data.get("m", False))
+        trades = self.recent_trades.setdefault(symbol, deque())
+        self.observed_since.setdefault(symbol, now)
+        amount = notional if is_buy else -notional
+        trades.append((now, amount))
+        self.flow_totals[symbol] = self.flow_totals.get(symbol, 0) + amount
+        while trades and trades[0][0] < now - FLOW_WINDOW_SECONDS:
+            self.flow_totals[symbol] -= trades.popleft()[1]
+        flow = self.flow_totals[symbol]
+        observed = min(FLOW_WINDOW_SECONDS, max(1, int(now - self.observed_since[symbol])))
+        message = build_message(symbol, is_buy, notional, qty, price, flow, event_time, observed)
+        for row in rows:
+            config = row["config"]
+            sub_id = row["subscription_id"]
+            if (notional < config["whale_min_usd"]
+                    or now - self.last_alert_at.get(sub_id, -float("inf")) < config["cooldown_seconds"]
+                    or now < self.retry_after.get(sub_id, 0)):
                 continue
-
-            data = payload.get(
-                "data",
-                payload,
-            )
-
-            if (
-                data.get("e")
-                != "aggTrade"
-            ):
-                continue
-
-            symbol = str(
-                data.get("s", "")
-            ).upper()
-
-            if (
-                symbol
-                not in subscriptions
-            ):
-                continue
-
-            try:
-                price = float(
-                    data.get("p", 0)
-                )
-                qty = float(
-                    data.get("q", 0)
-                )
-            except (
-                TypeError,
-                ValueError,
-            ):
-                continue
-
-            if (
-                price <= 0
-                or qty <= 0
-            ):
-                continue
-
-            # Binance "m" = 买方是否为 maker。
-            # m=true → 买方挂单，卖方主动 → 主动卖出。
-            # m=false → 买方主动 → 主动买入。
-            is_buy = not bool(
-                data.get("m", False)
-            )
-
             if dry_run:
+                log(f"DRY subscription={sub_id} {message}")
+                continue
+            try:
+                result = submit_event(sub_id, f"whale:{symbol}:{trade_id}",
+                                      message.split("\n", 1)[0], message, notional_usd=notional)
+                status = result.get("status")
+                if status in {"sent", "in_app", "pending", "cooldown", "duplicate"}:
+                    self.last_alert_at[sub_id] = now
+                elif status == "failed":
+                    self.retry_after[sub_id] = now + 5
+                log(f"subscription={sub_id} {symbol} status={status}")
+            except Exception as error:
+                # Avoid a request storm when the API is unavailable. Do not consume the user's cooldown.
+                self.retry_after[sub_id] = now + 5
+                log(f"Delivery error: {type(error).__name__}")
 
-                log(
-                    f"DRY {symbol} "
-                    f"{'买' if is_buy else '卖'} "
-                    f"{format_usd(price * qty)}"
-                )
 
-            else:
-
-                watcher.handle_trade(
-                    symbol,
-                    price,
-                    qty,
-                    is_buy,
-                )
-
-            # 定期刷新订阅：
-            # 币种/阈值变化则断开，由外层重连。
-            now = time.time()
-
-            if (
-                now - last_refresh
-                >= SUB_REFRESH_SECONDS
-            ):
-
-                last_refresh = now
-
-                try:
-                    fresh = (
-                        load_subscriptions()
-                    )
-                except Exception as error:
-
-                    log(
-                        "Refresh subscriptions "
-                        "failed | "
-                        f"{type(error).__name__}: "
-                        f"{error}"
-                    )
-
-                    continue
-
-                if set(
-                    fresh.keys()
-                ) != set(
-                    subscriptions.keys()
-                ):
-
-                    log(
-                        "Subscription symbols changed, "
-                        "reconnecting..."
-                    )
-
+async def watch_streams(watcher, dry_run=False):
+    symbols = set(watcher.subscriptions)
+    streams = "/".join(f"{symbol.lower()}@aggTrade" for symbol in sorted(symbols))
+    url = f"{BINANCE_WS_BASE}/stream?streams={streams}"
+    watcher.reset_flow()
+    next_refresh = time.monotonic() + SUB_REFRESH_SECONDS
+    async with websockets.connect(url, ping_interval=20, ping_timeout=20, close_timeout=10) as socket:
+        log(f"Connected: {', '.join(sorted(symbols))}")
+        while True:
+            if time.monotonic() >= next_refresh:
+                fresh = await asyncio.to_thread(load_subscriptions)
+                watcher.replace_subscriptions(fresh)
+                if set(fresh) != symbols:
                     return
+                next_refresh = time.monotonic() + SUB_REFRESH_SECONDS
+            try:
+                raw = await asyncio.wait_for(socket.recv(), timeout=max(.01, next_refresh - time.monotonic()))
+            except asyncio.TimeoutError:
+                continue  # Refresh even when the market is quiet.
+            try:
+                payload = json.loads(raw)
+                data = payload.get("data", payload)
+                if not isinstance(data, dict):
+                    continue
+            except (ValueError, AttributeError):
+                continue
+            await asyncio.to_thread(watcher.handle_trade, data, dry_run)
 
-                # 币种不变、仅阈值/冷却变化：
-                # 热更新，无需重连。
-                if fresh != subscriptions:
 
-                    log(
-                        "Subscription config updated"
-                    )
-
-                    subscriptions = fresh
-
-                    watcher.subscriptions = (
-                        fresh
-                    )
+async def watch_forever(dry_run=False):
+    watcher = WhaleWatcher({})
+    while True:
+        try:
+            watcher.replace_subscriptions(await asyncio.to_thread(load_subscriptions))
+            if not watcher.subscriptions:
+                await asyncio.sleep(SUB_REFRESH_SECONDS)
+                continue
+            await watch_streams(watcher, dry_run)
+        except Exception as error:
+            log(f"Stream error: {type(error).__name__}")
+            await asyncio.sleep(5)
 
 
 def main():
-
-    parser = (
-        argparse.ArgumentParser()
-    )
-
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help=(
-            "只打印收到的成交，"
-            "不推送 Telegram"
-        ),
-    )
-
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
-
-    log(
-        "Whale Print Worker started"
-        + (
-            " (dry-run)"
-            if args.dry_run
-            else ""
-        )
-    )
-
-    asyncio.run(
-        watch_forever(
-            dry_run=args.dry_run,
-        )
-    )
+    asyncio.run(watch_forever(args.dry_run))
 
 
 if __name__ == "__main__":

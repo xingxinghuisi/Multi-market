@@ -25,6 +25,8 @@ $env:RADAR_ALLOW_HTTP_LOCAL="1"
 
 ## 部署上下文
 
+「提醒 → 推送订阅」支持按币种管理 1H 多空播报和巨鲸大额聚合成交提醒，独立设置阈值与间隔。合约详情显示完整周期多空数据，两类事件统一进入个人通知中心与已绑定的 Telegram。订阅不修改行情采集开关。升级方式和数据边界见 [推送订阅说明](docs/push-subscriptions.md)。
+
 现有 `Dockerfile.app` 需要 `requirements.txt`；该文件仅在 `app/` 中存在，因此应用镜像必须使用 `app/` 作为构建上下文。例如：
 
 ```powershell

@@ -1,4 +1,5 @@
 import argparse
+import math
 import os
 import time
 
@@ -10,9 +11,9 @@ from datetime import (
 
 import requests
 
-from telegram_service import (
-    send_telegram_message,
-)
+from subscription_client import load_subscriptions, submit_event
+from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlencode
 
 
 API_BASE_URL = os.getenv(
@@ -109,135 +110,25 @@ def is_contract_segment(
 
 
 def load_watched_contract_assets():
-    # 推送名单来源：推送订阅表（alert_type=longshort_digest）。
-    # 原来读的是观察名单全部启用合约（"一刀切"），现改为只推订阅了的币。
-    response = requests.get(
-        f"{API_BASE_URL}/api/internal/subscriptions",
-        params={
-            "alert_type":
-                "longshort_digest",
-        },
-        headers={"X-Radar-Worker-Token": os.getenv("RADAR_WORKER_TOKEN", "")},
-        timeout=REQUEST_TIMEOUT,
-    )
-
-    response.raise_for_status()
-
-    data = response.json()
-
-    if not isinstance(
-        data,
-        list,
-    ):
-        raise RuntimeError(
-            "Subscriptions API did not "
-            "return a list"
-        )
-
-    assets = []
-    seen_symbols = set()
-
-    for item in data:
-
-        venue = str(
-            item.get(
-                "venue",
-                "",
-            )
-        ).upper()
-
-        if venue != "BINANCE":
-            continue
-
-        segment = item.get(
-            "segment"
-        )
-
-        if not is_contract_segment(
-            segment
-        ):
-            continue
-
-        symbol = str(
-            item.get(
-                "symbol",
-                "",
-            )
-        ).upper()
-
-        if not symbol:
-            continue
-
-        # 同一个 symbol 避免重复推送
-        if symbol in seen_symbols:
-            continue
-
-        seen_symbols.add(
-            symbol
-        )
-
-        assets.append(
-            {
-                "asset_id":
-                    item.get(
-                        "asset_id"
-                    ),
-                "symbol":
-                    symbol,
-                "name":
-                    item.get(
-                        "name"
-                    ),
-                "segment":
-                    segment,
-            }
-        )
-
-    return assets
+    # Keep every account's subscription. Fetch source data once per symbol in run_once.
+    return load_subscriptions("longshort_digest")
 
 
-def fetch_binance_rows(
-    endpoint,
-    symbol,
-):
-    url = (
-        f"{BINANCE_FUTURES_BASE_URL}"
-        f"/futures/data/"
-        f"{endpoint}"
-    )
 
-    response = requests.get(
-        url,
-        params={
-            "symbol":
-                symbol,
-            "period":
-                PERIOD,
-            "limit":
-                8,
-        },
-        headers={
-            "User-Agent":
-                "Market-Radar/1.0",
-        },
-        timeout=REQUEST_TIMEOUT,
-    )
-
-    response.raise_for_status()
-
-    data = response.json()
-
-    if not isinstance(
-        data,
-        list,
-    ):
-        raise RuntimeError(
-            f"{endpoint} "
-            f"returned invalid data: "
-            f"{data}"
-        )
-
+def fetch_binance_rows(endpoint, symbol, read_json=None):
+    url = f"{BINANCE_FUTURES_BASE_URL}/futures/data/{endpoint}"
+    params = {"symbol": symbol, "period": PERIOD, "limit": 8}
+    if read_json is not None:
+        data = read_json(f"{url}?{urlencode(params)}")
+    else:
+        response = requests.get(url, params=params, headers={"User-Agent": "MIRAO/1.0"},
+                                timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()
+        data = response.json()
+    if not isinstance(data, list):
+        raise RuntimeError("Binance did not return a list")
     return data
+
 
 
 def find_timestamp_row(
@@ -268,9 +159,12 @@ def ratio_value(
     row,
     field,
 ):
-    return float(
+    value = float(
         row[field]
     )
+    if not math.isfinite(value) or value < 0:
+        raise ValueError("Invalid Binance ratio")
+    return value
 
 
 def direction_arrow(
@@ -335,7 +229,7 @@ def build_hour_targets():
 
 
 def fetch_metrics(
-    symbol,
+    symbol, read_json=None,
 ):
     targets = (
         build_hour_targets()
@@ -353,54 +247,12 @@ def fetch_metrics(
         "previous_start"
     ]
 
-    # =====================================
-    # Binance 三个账户/持仓 Ratio 接口
-    #
-    # 根据当前接口返回方式：
-    # timestamp 使用周期结束整点。
-    #
-    # 例如：
-    # 21:00-22:00
-    # timestamp = 22:00
-    # =====================================
-
-    global_rows = (
-        fetch_binance_rows(
-            "globalLongShortAccountRatio",
-            symbol,
-        )
-    )
-
-    top_account_rows = (
-        fetch_binance_rows(
-            "topLongShortAccountRatio",
-            symbol,
-        )
-    )
-
-    top_position_rows = (
-        fetch_binance_rows(
-            "topLongShortPositionRatio",
-            symbol,
-        )
-    )
-
-    # =====================================
-    # Taker 接口
-    #
-    # timestamp 使用周期开始整点。
-    #
-    # 例如：
-    # 21:00-22:00
-    # timestamp = 21:00
-    # =====================================
-
-    taker_rows = (
-        fetch_binance_rows(
-            "takerlongshortRatio",
-            symbol,
-        )
-    )
+    # Read independent public endpoints concurrently; reuse the same hour targets.
+    endpoints = ("globalLongShortAccountRatio", "topLongShortAccountRatio",
+                 "topLongShortPositionRatio", "takerlongshortRatio")
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        global_rows, top_account_rows, top_position_rows, taker_rows = list(pool.map(
+            lambda endpoint: fetch_binance_rows(endpoint, symbol, read_json), endpoints))
 
     hour_end_ms = int(
         hour_end.timestamp()
@@ -738,101 +590,29 @@ def build_message(
     )
 
 
-def run_once(
-    dry_run=False,
-):
-    assets = (
-        load_watched_contract_assets()
-    )
-
-    log(
-        "Watched Binance "
-        f"crypto contracts: "
-        f"{len(assets)}"
-    )
-
-    if not assets:
-        log(
-            "No watched Binance "
-            "crypto contracts"
-        )
-        return
-
-    success = 0
-    failed = 0
-
-    for asset in assets:
-
-        symbol = asset[
-            "symbol"
-        ]
-
-        segment = asset.get(
-            "segment"
-        )
-
+def run_once(dry_run=False):
+    grouped = {}
+    for sub in load_watched_contract_assets():
+        grouped.setdefault(sub["symbol"], []).append(sub)
+    for symbol, subscriptions in grouped.items():
         try:
-            log(
-                f"Fetching {symbol} "
-                f"| segment={segment}"
-            )
-
-            metrics = (
-                fetch_metrics(
-                    symbol
-                )
-            )
-
-            message = (
-                build_message(
-                    symbol,
-                    metrics,
-                )
-            )
-
-            if dry_run:
-                print()
-                print(
-                    "===== DRY RUN ====="
-                )
-                print(message)
-                print(
-                    "==================="
-                )
-                print()
-
-            else:
-                sent = (
-                    send_telegram_message(
-                        message
-                    )
-                )
-
-                if not sent:
-                    raise RuntimeError(
-                        "Telegram send failed"
-                    )
-
-                log(
-                    f"SENT {symbol}"
-                )
-
-            success += 1
-
+            metrics = fetch_metrics(symbol)
+            message = build_message(symbol, metrics)
+            event_key = f"digest:{symbol}:{metrics['hour_end'].isoformat()}"
         except Exception as error:
-            failed += 1
+            log(f"SKIP {symbol}: {type(error).__name__}")
+            continue
+        for sub in subscriptions:
+            if dry_run:
+                print(f"subscription={sub['subscription_id']}\n{message}")
+                continue
+            try:
+                result = submit_event(sub["subscription_id"], event_key,
+                                      f"{symbol} · 1H 多空播报", message)
+                log(f"{symbol} subscription={sub['subscription_id']} status={result.get('status')}")
+            except Exception as error:
+                log(f"Delivery failed: {type(error).__name__}")
 
-            log(
-                f"SKIP {symbol} | "
-                f"{type(error).__name__}: "
-                f"{error}"
-            )
-
-    log(
-        f"Cycle complete | "
-        f"success={success} | "
-        f"failed={failed}"
-    )
 
 
 def next_run_time():

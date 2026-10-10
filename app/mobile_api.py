@@ -15,6 +15,9 @@ from sqlalchemy import select
 
 from models import AlertRule, AlertSubscription, Asset, Notification, TelegramChallenge, User, UserHiddenAsset, WatchlistItem
 from crypto_metrics import get_futures_metrics
+from longshort_metrics import get_longshort_metrics
+from subscription_service import supports_subscription, subscription_config, deliver_subscription_event
+from schemas import SubscriptionEvent
 from telegram_service import BOT_TOKEN, CHAT_ID, get_bot_username, send_telegram_message
 
 _telegram_test_times = {}
@@ -97,6 +100,9 @@ def install_mobile_routes(app, get_db, get_default_user, read_binance_json):
         for rule in db.scalars(select(AlertRule).where(
                 AlertRule.user_id == user.id, AlertRule.asset_id == asset_id)).all():
             rule.enabled = False
+        for sub in db.scalars(select(AlertSubscription).where(
+                AlertSubscription.user_id == user.id, AlertSubscription.asset_id == asset_id)).all():
+            sub.enabled = False
         db.commit()
         return {"hidden": True, "asset_id": asset_id}
 
@@ -197,6 +203,13 @@ def install_mobile_routes(app, get_db, get_default_user, read_binance_json):
             raise HTTPException(status_code=404, detail="Asset not found")
         return get_futures_metrics(asset, read_binance_json)
 
+    @app.get("/api/assets/{asset_id}/longshort-metrics")
+    def longshort_metrics(asset_id: int, db=Depends(get_db)):
+        asset = db.get(Asset, asset_id)
+        if asset is None:
+            raise HTTPException(status_code=404, detail="Asset not found")
+        return get_longshort_metrics(asset, read_binance_json)
+
     @app.get("/api/internal/news-watchlist")
     def news_worker_watchlist(db=Depends(get_db)):
         rows = db.execute(
@@ -226,7 +239,7 @@ def install_mobile_routes(app, get_db, get_default_user, read_binance_json):
                  "enabled": asset.enabled} for asset in rows]
 
     @app.get("/api/internal/subscriptions")
-    def internal_subscriptions(alert_type: str = Query(...), db=Depends(get_db)):
+    def internal_subscriptions(alert_type: str = Query(..., pattern="^(longshort_digest|whale_print)$"), db=Depends(get_db)):
         """Worker 用：返回指定提醒类型下所有启用的推送订阅。"""
         rows = db.execute(
             select(AlertSubscription, Asset, User)
@@ -236,14 +249,26 @@ def install_mobile_routes(app, get_db, get_default_user, read_binance_json):
                    AlertSubscription.enabled.is_(True))
             .order_by(AlertSubscription.id)
         ).all()
-        return [{
-            "subscription_id": sub.id,
-            "user_id": user.id,
-            "telegram_chat_id": user.telegram_chat_id,
-            "asset_id": asset.id,
-            "symbol": asset.symbol,
-            "name": asset.name,
-            "venue": asset.venue,
-            "segment": asset.segment,
-            "config": sub.config or {},
-        } for (sub, asset, user) in rows]
+        result = []
+        for sub, asset, user in rows:
+            if not supports_subscription(asset):
+                continue
+            try:
+                config = subscription_config(sub)
+            except ValueError:
+                continue  # Ignore invalid config from older versions until the user corrects it.
+            result.append({
+                "subscription_id": sub.id,
+                "user_id": user.id,
+                "asset_id": asset.id,
+                "symbol": asset.symbol,
+                "name": asset.name,
+                "venue": asset.venue,
+                "segment": asset.segment,
+                "config": config,
+            })
+        return result
+
+    @app.post("/api/internal/subscriptions/{subscription_id}/events")
+    def subscription_event(subscription_id: int, payload: SubscriptionEvent, db=Depends(get_db)):
+        return deliver_subscription_event(db, subscription_id, payload)

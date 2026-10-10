@@ -121,7 +121,7 @@ def test_client_version_is_uncached(client):
     response = client.get("/api/client-version")
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
-    assert response.json()["version"] == "2026.09.28.4"
+    assert response.json()["version"] == (api.WEB_DIR / "version.txt").read_text(encoding="utf-8").strip()
 
 
 def test_notifications_are_scoped_and_bounded(client):
@@ -236,7 +236,7 @@ def test_news_worker_requires_service_token_and_aggregates_watched_assets(client
     assert client.patch("/api/assets/1", json={"name": "Changed"}).status_code == 403
 
 
-def test_hourly_contract_worker_uses_legacy_only_internal_route(monkeypatch):
+def test_hourly_contract_worker_uses_subscription_internal_route(monkeypatch):
     import crypto_metrics_worker
 
     captured = {}
@@ -256,7 +256,8 @@ def test_hourly_contract_worker_uses_legacy_only_internal_route(monkeypatch):
     monkeypatch.setenv("RADAR_WORKER_TOKEN", "test-worker-secret")
     monkeypatch.setattr(crypto_metrics_worker.requests, "get", fake_get)
     assert [item["asset_id"] for item in crypto_metrics_worker.load_watched_contract_assets()] == [2]
-    assert captured["url"].endswith("/api/internal/default-contract-watchlist")
+    assert captured["url"].endswith("/api/internal/subscriptions")
+    assert captured["params"] == {"alert_type": "longshort_digest"}
     assert captured["headers"] == {"X-Radar-Worker-Token": "test-worker-secret"}
 
 

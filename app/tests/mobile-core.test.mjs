@@ -1,6 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {number, percent, safeURL, escapeHTML, kind, marketMatches, candleSeries, alertPayload, timestamp} from "../web/static/mobile-core.js";
+import {number, percent, safeURL, escapeHTML, kind, marketMatches, candleSeries, alertPayload, timestamp, supportsSubscriptions} from "../web/static/mobile-core.js";
+
+test("subscriptions select USD-M contracts independently of quote collection",()=>{
+  const asset={asset_type:"crypto",venue:"BINANCE",currency:"USDT",segment:"FUTURES",enabled:false};
+  assert.equal(supportsSubscriptions(asset),true);
+  assert.equal(supportsSubscriptions({...asset,segment:"SPOT"}),false);
+  assert.equal(supportsSubscriptions({...asset,currency:"USD"}),false);
+  assert.equal(supportsSubscriptions({...asset,asset_type:"stock"}),false);
+  assert.equal(supportsSubscriptions({...asset,segment:"USD_M"}),true);
+});
 
 test("missing numeric fields are never presented as zero",()=>{
   for(const value of [null,undefined,"",NaN,Infinity]) {assert.equal(number(value),"—");assert.equal(percent(value),"—");}

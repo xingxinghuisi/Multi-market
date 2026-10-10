@@ -289,3 +289,24 @@ details.sub-card[open] .sub-chev{transform:rotate(180deg)}
 .prow .inf small{display:block;color:#7a8a6c;font-size:11px}
 .prow .plus{width:36px;height:36px;border-radius:50%;background:#14532d;color:#f2f7e8;font-size:18px;min-height:0;min-width:0;padding:0;flex:none}
 @media(max-width:700px){.sub-card{padding:14px 16px}.seg-tabs button{padding:8px 22px}}
+
+/* Subscription controls share the application's theme and keyboard affordances. */
+.sub-row .lb{margin:0;min-width:0}
+.switch input:focus-visible+.tr{outline:3px solid var(--ink);outline-offset:4px}
+.switch input:disabled+.tr{opacity:.5}
+.sub-del{width:44px;height:44px}
+.sheet{max-height:85dvh}
+.sheet .plist{overscroll-behavior:contain}
+.sheet-mask{overscroll-behavior:contain}
+html[data-theme="dark"] .seg-tabs{background:#24372e}
+html[data-theme="dark"] .seg-tabs button{color:#aac2b2}
+html[data-theme="dark"] .seg-tabs button.active{background:#355340;color:#e0f8e1}
+html[data-theme="dark"] .sub-card,html[data-theme="dark"] .sheet{background:#1b3028;color:var(--ink)}
+html[data-theme="dark"] .sub-status,html[data-theme="dark"] .sub-add{color:#b8f1ca}
+html[data-theme="dark"] .sub-status.off,html[data-theme="dark"] .sub-row .lb small,html[data-theme="dark"] .sheet .sheet-sub,html[data-theme="dark"] .prow .inf small,html[data-theme="dark"] .sub-row .thr{color:var(--muted)}
+html[data-theme="dark"] .sub-detail,html[data-theme="dark"] .sub-row,html[data-theme="dark"] .prow{border-color:#3d5749}
+html[data-theme="dark"] .sub-del{border-color:#754850;color:#ffacb2}
+html[data-theme="dark"] .switch .tr{background:#4c6254}
+html[data-theme="dark"] .switch input:checked+.tr{background:#228a52}
+@media(prefers-reduced-motion:reduce){.switch .tr,.switch .tr::after,.sub-chev{transition:none}}
+@media(max-width:380px){.sub-head{flex-wrap:wrap}.sub-row{gap:8px}.sub-row .thr input{width:100px}.seg-tabs button{padding:8px 18px}}

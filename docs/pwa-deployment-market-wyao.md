@@ -75,10 +75,12 @@ location = /api/auth/login {
 docker build -f Dockerfile.app -t korea-market-radar-app:latest app
 docker compose --env-file .env.production config --quiet
 docker compose --env-file .env.production run --rm --no-deps api python deployment_preflight.py
-docker compose --env-file .env.production up -d api market_worker crypto_metrics_worker news_worker
+docker compose --env-file .env.production up -d api market_worker crypto_metrics_worker whale_print_worker news_worker
 ```
 
 `app/.dockerignore` 会把本机数据库排除在镜像构建上下文之外。Compose 仍挂载 `./app/data:/app/data`，已有数据库会保留。新认证表在 API 启动时单独创建；请先完成备份。既有 `default` 账户不会自动分配给任何新注册者。如果需要继续访问原有关注和提醒，备份后在服务器交互式执行 `docker compose --env-file .env.production exec api python claim_default_account.py` 为它设置密码。
+
+多空/巨鲸订阅升级还会自动新增 `alert_subscriptions` 与 `subscription_deliveries` 表，保留原有账户、行情、价格规则和通知。API 与两个订阅 worker 必须一起更新并使用相同的 `RADAR_WORKER_TOKEN`。详细操作与投递边界见 [推送订阅说明](push-subscriptions.md)。不要重新初始化生产数据库。
 
 ## 4. 上线验收
 

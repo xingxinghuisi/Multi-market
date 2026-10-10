@@ -174,6 +174,7 @@ app.mount(
 )
 
 from mobile_api import install_mobile_routes
+from subscription_service import initialize_subscription_tables, supports_subscription, subscription_config
 
 
 @app.on_event(
@@ -183,6 +184,7 @@ async def start_market_broadcaster():
 
     Base.metadata.create_all(database_engine, tables=[UserCredential.__table__, UserSession.__table__,
                                                      UserHiddenAsset.__table__, TelegramChallenge.__table__], checkfirst=True)
+    initialize_subscription_tables(database_engine)
 
     app.state.market_broadcast_task = (
         asyncio.create_task(
@@ -4527,6 +4529,13 @@ def serialize_subscription(
     asset,
 ):
 
+    try:
+        config = subscription_config(subscription)
+        config_valid = True
+    except ValueError:
+        config = {"whale_min_usd": 50000, "cooldown_seconds": 300}
+        config_valid = False
+
     return {
         "id": subscription.id,
 
@@ -4542,7 +4551,8 @@ def serialize_subscription(
 
         "alert_type": subscription.alert_type,
         "enabled": subscription.enabled,
-        "config": subscription.config or {},
+        "config": config,
+        "config_valid": config_valid,
         "created_at": subscription.created_at,
     }
 
@@ -4633,6 +4643,9 @@ def upsert_subscription(
         db,
         payload.asset_id,
     )
+
+    if not supports_subscription(asset):
+        raise HTTPException(status_code=400, detail="推送订阅目前仅支持 Binance USDT 合约")
 
     subscription = db.scalar(
         select(
