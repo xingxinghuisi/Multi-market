@@ -22,6 +22,13 @@ test("unconfigured service shows coverage and never invents wallets or markets",
   assert.ok(html.includes("xyz:KORU 与 Binance KORUUSDT 是不同市场"));
   assert.ok(!html.includes("0x123"));
 });
+
+test("unrealized P&L distinguishes profit, loss, zero and unavailable old records",()=>{
+  for(const [pnl,display] of [["1234.50","+$1,234.50"],["-987.65","-$987.65"],["0","$0.00"],[undefined,"未提供"],[null,"未提供"],["NaN","未提供"]]){
+    const html=whalePage({positions:[{coin:"xyz:KORU",address:"Synthetic test",qty:"1",notional_usd:"1000",unrealized_pnl:pnl}]},true);
+    assert.match(html,new RegExp(`当前未实现盈亏<strong[^>]*>${display.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}</strong>`));
+  }
+});
 test("known wallets are escaped and existing subscriptions cannot be accidentally added twice",()=>{
   const html=whalePage({runtime:{online:true,connected:true},markets:[{coin:"xyz:KORU",name:"ETF"}],
     subscriptions:[{id:1,coin:"xyz:KORU",enabled:true,min_position_usd:1000000,cooldown_seconds:300}],

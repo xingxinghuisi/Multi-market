@@ -12,6 +12,8 @@ PWA「提醒 → 链上巨鲸仓位」独立于原有 Binance 聚合成交提醒
 
 事件包括新发现已有仓位、新开仓、加仓、减仓、平仓和反向开仓。首次快照只记为「新发现已有仓位」；之后按两次快照的**签名数量**比较，不根据价格造成的市值涨跌推断加减仓。反向开仓标为净反向，无法推断期间是否经过多次交易。新开仓表示上次核验为零、本次非零，不表示精确成交时间。推送中的均价和杠杆为**当前仓位快照值**，不是历史订单杠杆或本次成交价。平仓不编造已不存在的当前均价或杠杆。
 
+Telegram 与仓位页面显示官方快照 `unrealizedPnl` 的**当前未实现盈亏**，正负号区分浮盈和浮亏，真实零值显示 `$0.00`。字段缺失或无效、尚未重新核验的旧记录显示“未提供”，不自行估算。盈亏变化本身不触发开仓／加减仓事件；当前仓位页面随正常核验更新，历史事件中的盈亏保留事件核验时的快照。已平仓事件不把浮盈亏或零持仓冒充已实现收益；已实现净利润需要另外获取成交和结算记录。本次仅扩展 JSON 快照字段，无数据库迁移，不补发历史 Telegram 消息。
+
 通知统一保存在账户通知中心，发给该用户已验证绑定的 Telegram；只有旧 `default` 账户可沿用部署接收目标。首行直接显示市场、事件、方向及当前名义价值。每用户每事件持久去重；同地址同市场冷却，不会让另一地址的事件被误抑制。显式发送失败最多重试两次；投递前重新检查订阅。进程意外停止后已标为 pending 的投递不自动重发，避免重复；Telegram 请求超时本身存在「已接收但未返回」的不确定性。
 
 ## 覆盖和运行边界
@@ -65,6 +67,8 @@ node --check app/web/static/whales.js
 The service automatically discovers public wallets from both counterparties of observed trades in subscribed Hyperliquid / trade.xyz perpetuals. Users search the official `xyz` catalog and configure markets, position-value thresholds and wallet/market cooldowns without entering addresses. All currently listed, non-delisted xyz instruments are eligible; the initial four-market allowlist has been removed. Metadata is refreshed at startup and hourly. The catalog includes equities, ETFs and other instruments, so unfamiliar names retain neutral perpetual labels. The live catalog returned 114 markets during development verification on 2026-10-11; availability changes over time. Existing subscriptions are preserved, only enabled markets are monitored, and these are distinct from Binance instruments.
 
 Persistent candidate wallets are verified through public clearinghouse snapshots. Initial holdings are labeled discoveries; subsequent signed-quantity changes produce net opening, increase, reduction, closure or reversal events. Price-only valuation changes do not imply new trades. Entry price and leverage represent the current position snapshot, not an individual fill or historical leverage setting. Events reuse account notification history and verified Telegram recipients with durable delivery claims and bounded explicit-failure retries.
+
+Position cards and Telegram messages display the source snapshot's `unrealizedPnl` as current unrealized P&L, preserving profit, loss and zero. Missing or invalid fields and older records remain unavailable until verified again. P&L-only changes do not generate position-change alerts. Event P&L is historical to that event snapshot, while current holdings update through normal polling. Closure events do not infer realized profit from unrealized P&L or zero position value. Existing JSON snapshots remain compatible without a database migration or historical Telegram replay.
 
 Coverage begins with observed public trades and the persisted candidate pool; this is not a complete historical or cross-exchange index. Quiet pre-existing wallets, short-lived positions between polls, pool overflow, reconnection gaps and throttling may cause omissions. The UI exposes source scope, heartbeat, subscription acknowledgments, timestamps, queue depth, errors and stale positions. Run one worker replica with the existing SQLite volume. Upgrade the API and new worker after backing up production data; pulling source does not rebuild running containers.
 

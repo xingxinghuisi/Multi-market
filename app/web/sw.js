@@ -1,6 +1,6 @@
 /* Cache only the public application shell. Financial and account data stay network-only. */
-const CACHE = "market-radar-shell-v12";
-const VERSION = "2026.10.11.3";
+const CACHE = "market-radar-shell-v13";
+const VERSION = "2026.10.11.4";
 const SHELL = ["/", ...["mobile.css","mobile.js","mobile-core.js","whales.js","app-update.js"].map(name=>`/static/${name}?v=${VERSION}`),
   "/static/radar-icon.svg", "/static/radar-192.png", "/static/radar-512.png", "/static/manifest.webmanifest"];
 self.addEventListener("install", event => {

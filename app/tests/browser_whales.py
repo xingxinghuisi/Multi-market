@@ -31,7 +31,7 @@ def main():
     lock = threading.Lock()
     address = "0x" + "a" * 40
     position = {"qty":"100000", "notional_usd":"2000000", "entry_price":"19.5",
-                "leverage":"10", "leverage_type":"isolated", "snapshot_ms":milliseconds()-240000}
+                "leverage":"10", "leverage_type":"isolated", "unrealized_pnl":"12345.67", "snapshot_ms":milliseconds()-240000}
     with sessions() as db:
         db.add(WhaleRuntime(id=1, data={"catalog_ms":milliseconds(),"heartbeat_ms":milliseconds(),
             "started_ms":milliseconds(),"connected":True,"subscribed_coins":["xyz:KORU"],

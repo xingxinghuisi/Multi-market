@@ -10,6 +10,10 @@ const path=require("node:path");
   const base=process.env.RADAR_TEST_BASE_URL;
   const output=path.resolve(__dirname,"../../test-results");fs.mkdirSync(output,{recursive:true});
   try{
+    await page.goto(base+"/#welcome");
+    const release=fs.readFileSync(path.resolve(__dirname,"../web/version.txt"),"utf8").trim();
+    await page.locator(".app-version").waitFor();
+    assert.equal(await page.locator(".app-version").textContent(),`当前版本 ${release}`);
     await page.goto(base+"/#register");
     await page.getByLabel("用户名",{exact:true}).fill("whale_ui_"+Date.now());
     await page.getByLabel("密码",{exact:true}).fill("synthetic-browser-password");
@@ -24,6 +28,7 @@ const path=require("node:path");
     const form=page.locator("form.whale-subscription-form[data-id]");
     await form.waitFor();
     await page.getByText("数据已过期",{exact:false}).waitFor();
+    await page.getByText("+$12,345.67",{exact:true}).waitFor();
     assert.equal((await page.request.post(base+"/__fixture__/whale-event")).status(),200);
     await page.getByRole("button",{name:"刷新状态"}).click();
     await page.getByRole("heading",{name:"新发现已有仓位 · 多单"}).waitFor();
@@ -64,6 +69,6 @@ const path=require("node:path");
     assert.ok(cached.includes("/static/whales.js"));
     assert.ok(!cached.some(url=>url.startsWith("/api/")));
     assert.deepEqual(errors,[]);
-    console.log("WHALE_BROWSER_OK: real auth/CRUD, catalog search, non-equity subscription, synthetic position/event, stale state, 320-1440px, light/dark, private cache exclusion");
+    console.log("WHALE_BROWSER_OK: About version, unrealized P&L, real auth/CRUD, catalog search, non-equity subscription, synthetic position/event, stale state, 320-1440px, light/dark, private cache exclusion");
   }finally{await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

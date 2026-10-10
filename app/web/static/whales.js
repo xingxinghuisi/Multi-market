@@ -1,8 +1,9 @@
-import {escapeHTML as e, number as n} from "./mobile-core.js?v=2026.10.11.3";
+import {escapeHTML as e, number as n} from "./mobile-core.js?v=2026.10.11.4";
 
 const labels={discovered:"新发现已有仓位",opened:"新开仓",increased:"加仓",reduced:"减仓",closed:"平仓",flipped:"反向开仓"};
 const stamp=value=>value?new Date(value).toLocaleString("zh-CN"):"尚未收到";
 const money=value=>value==null?"未提供":`$${n(value,2)}`;
+const pnlMoney=value=>value==null||value===""||!Number.isFinite(Number(value))?"未提供":`${Number(value)>0?"+":Number(value)<0?"-":""}$${Math.abs(Number(value)).toLocaleString("zh-CN",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
 const address=value=>`<span class="whale-address">${e(value)}</span>`;
 export function matchingWhaleMarkets(markets,subscriptions,query="") {
   const term=query.trim().toLocaleLowerCase();
@@ -16,7 +17,7 @@ function fields(sub, markets) {
   <label class="whale-enabled"><input name="enabled" type="checkbox"${!sub||sub.enabled?" checked":""}> 开启自动发现和提醒</label>`;
 }
 function snapshot(p) {
-  return `<div class="whale-numbers"><span>仓位名义价值<strong>${money(p.notional_usd)}</strong></span><span>平均开仓价<strong>${money(p.entry_price)}</strong></span><span>当前杠杆设置<strong>${p.leverage==null?"未提供":`${e(p.leverage)}x`} ${e(({cross:"全仓",isolated:"逐仓"})[p.leverage_type]||"")}</strong></span></div>`;
+  return `<div class="whale-numbers"><span>仓位名义价值<strong>${money(p.notional_usd)}</strong></span><span>平均开仓价<strong>${money(p.entry_price)}</strong></span><span>当前未实现盈亏<strong class="${Number(p.unrealized_pnl)>0?"up":Number(p.unrealized_pnl)<0?"down":""}">${pnlMoney(p.unrealized_pnl)}</strong></span><span>当前杠杆设置<strong>${p.leverage==null?"未提供":`${e(p.leverage)}x`} ${e(({cross:"全仓",isolated:"逐仓"})[p.leverage_type]||"")}</strong></span></div>`;
 }
 export function whalePage(data, telegramConfigured) {
   const {markets=[],subscriptions=[],positions=[],events=[],runtime:r={}}=data||{};
@@ -26,6 +27,7 @@ export function whalePage(data, telegramConfigured) {
   return `<a class="back" href="#alerts">← 返回提醒中心</a><div class="page-heading"><div><p class="eyebrow">PUBLIC WALLET INTELLIGENCE</p><h1>链上巨鲸仓位</h1></div><span class="tag">${status}</span></div>
   <div class="notice"><strong>Hyperliquid / trade.xyz · 官方目录永续合约</strong><br>${e(data?.coverage||"自动从公开成交发现钱包，无需提供地址。仅覆盖已选市场；尚未导入全量历史。")}
   <br>可选 ${markets.length} 个经官方目录核验的市场，包含股票、ETF 及其他品种；仅监听已开启订阅的市场。
+  <br>盈亏为核验时的持仓浮盈／浮亏，不代表已实现净利润；缺失时显示未提供。
   <br><strong>xyz:KORU 与 Binance KORUUSDT 是不同市场。</strong></div>
   ${!telegramConfigured?'<div class="notice">未绑定 Telegram，提醒会保存在站内通知。<a href="#settings">绑定 Telegram →</a></div>':""}
   <section class="card whale-health"><div class="section-title"><h2>监控覆盖</h2><button data-action="whale-refresh">刷新状态</button></div>

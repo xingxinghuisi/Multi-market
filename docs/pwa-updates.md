@@ -14,6 +14,8 @@
 
 发布新版本时，保持 `web/version.txt`、`mobile.js`、`mobile.html`、模块导入与 `sw.js` 的版本一致，并更新 SW 缓存名称。`app-update.test.mjs` 检查发布版本一致性。
 
+「个人中心 → 关于 MIRAO」显示当前已加载页面的 PWA 版本，直接复用 `APP_VERSION`，方便核对自动更新结果；不把服务器返回的新版本误显示为已安装版本。
+
 ## English
 
 The version API could report a new build while HTTP caches retained an older JavaScript bundle for four hours. Repeated reloads then fetched the same stale bundle. Entry assets, module imports and worker registration now use release-version URLs, the document requests revalidation, and the worker revalidates its explicit public shell cache. Private API responses remain uncached.

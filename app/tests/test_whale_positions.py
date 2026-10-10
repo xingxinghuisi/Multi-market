@@ -61,6 +61,36 @@ def test_first_snapshot_is_discovery_and_price_only_change_is_not_increase():
     assert "Hyperliquid / trade.xyz" in text
 
 
+@pytest.mark.parametrize("source,expected,display", [
+    ("1234.50", "1234.50", "+$1,234.50"),
+    ("-987.65", "-987.65", "-$987.65"), ("0", "0", "$0.00"),
+    (None, None, "未提供"), ("NaN", None, "未提供"), ("1e400", None, "未提供"),
+])
+def test_unrealized_pnl_uses_source_value_without_inventing_missing_profit(source, expected, display):
+    raw = snapshot()
+    raw["assetPositions"][0]["position"]["unrealizedPnl"] = source
+    stamp, positions = parse_positions(raw, [COIN])
+    current = positions[COIN]
+    assert current["unrealized_pnl"] == expected
+    event = position_event(A, COIN, None, current, stamp)
+    assert event["unrealized_pnl"] == expected
+    assert f"当前未实现盈亏：{display}" in event_text(event)[1]
+    # Mark-to-market P&L changes alone must not trigger a new position event.
+    assert position_event(A, COIN, current, {**current,"unrealized_pnl":"5000"}, stamp+1) is None
+
+
+def test_old_snapshots_and_closures_do_not_invent_realized_profit():
+    stamp, positions = parse_positions(snapshot(), [COIN, "xyz:GOLD"])
+    assert positions[COIN]["unrealized_pnl"] is None
+    assert positions["xyz:GOLD"]["unrealized_pnl"] is None
+    closed = position_event(A, COIN, {**position(),"unrealized_pnl":"1234"},
+                            {**position("0","0"),"unrealized_pnl":"0"}, stamp)
+    assert closed["unrealized_pnl"] is None
+    message = event_text(closed)[1]
+    assert "已实现盈亏：未提供" in message
+    assert "当前未实现盈亏" not in message
+
+
 @pytest.mark.parametrize("before,after,kind,side", [
     ("0", "100000", "opened", "long"), ("100000", "120000", "increased", "long"),
     ("100000", "50000", "reduced", "long"), ("100000", "0", "closed", "long"),

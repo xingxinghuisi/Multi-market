@@ -88,7 +88,7 @@ def parse_positions(raw, coins):
     if stamp <= 0 or stamp > milliseconds() + 60000:
         raise ValueError("Invalid snapshot time")
     result = {coin: {"qty": "0", "notional_usd": "0", "entry_price": None,
-                     "leverage": None, "leverage_type": None} for coin in coins}
+                     "leverage": None, "leverage_type": None, "unrealized_pnl": None} for coin in coins}
     seen = set()
     for row in raw["assetPositions"]:
         p = row.get("position", {})
@@ -110,8 +110,16 @@ def parse_positions(raw, coins):
         lev = None if leverage.get("value") is None else decimal(leverage["value"])
         if lev is not None and lev <= 0:
             raise ValueError("Invalid leverage")
+        # An optional P&L field must not invalidate an otherwise valid position.
+        try:
+            pnl = decimal(p.get("unrealizedPnl"))
+            if abs(pnl) > Decimal("1e18"):
+                pnl = None
+        except ValueError:
+            pnl = None
         result[coin] = {"qty": str(qty), "notional_usd": str(notional),
                         "entry_price": str(entry) if entry is not None else None,
+                        "unrealized_pnl": str(pnl) if qty != 0 and pnl is not None else None,
                         "leverage": str(lev) if lev is not None else None,
                         "leverage_type": leverage.get("type") if leverage.get("type") in {"cross", "isolated"} else None}
     for p in result.values():
@@ -151,6 +159,7 @@ def position_event(address, coin, previous, current, snapshot_ms):
                "qty": str(qty), "delta_qty": str(qty - old) if old is not None else None,
                "notional_usd": current["notional_usd"], "qualifying_usd": str(qualifying),
                "entry_price": current["entry_price"], "leverage": current["leverage"],
+               "unrealized_pnl": current.get("unrealized_pnl") if qty != 0 else None,
                "leverage_type": current["leverage_type"], "snapshot_ms": snapshot_ms,
                "previous_snapshot_ms": previous.get("snapshot_ms") if previous else None,
                "previous_notional_usd": previous["notional_usd"] if previous else None,
@@ -174,8 +183,17 @@ def event_text(event):
     else:
         text += f"仓位数量：{event['qty']}\n"
     text += f"当前仓位名义价值：${value:,.2f}\n"
+    if event["kind"] != "closed":
+        pnl = event.get("unrealized_pnl")
+        if pnl is None:
+            text += "当前未实现盈亏：未提供\n"
+        else:
+            amount = decimal(pnl)
+            sign = "+" if amount > 0 else "-" if amount < 0 else ""
+            text += f"当前未实现盈亏：{sign}${abs(amount):,.2f}\n"
     if event["kind"] == "closed":
         text += f"上次核验名义价值：${decimal(event['previous_notional_usd']):,.2f}\n"
+        text += "已实现盈亏：未提供（需平仓成交记录）\n"
     stamp = datetime.fromtimestamp(event["snapshot_ms"] / 1000, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     text += f"核验时间：{stamp}\n来源：{SOURCE}\n"
     if event.get("previous_snapshot_ms"):
