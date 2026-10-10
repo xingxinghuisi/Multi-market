@@ -321,6 +321,7 @@ def test_watchlist_and_alert_roundtrip_preserves_product_identity(client):
 
 def test_new_shell_legacy_and_pwa_assets(client):
     assert "mobile.js" in client.get("/").text
+    assert client.get("/").headers["cache-control"] == "no-cache"
     assert "/static/app.js" in client.get("/legacy").text
     response = client.get("/sw.js")
     assert response.headers["service-worker-allowed"] == "/"
@@ -432,6 +433,27 @@ def test_whale_updates_require_csrf_and_stale_catalog_is_rejected(client):
         row.data = {**row.data, "catalog_ms": 1}
         db.commit()
     assert client.put("/api/whales/subscriptions", json=body).status_code == 503
+    assert client.put("/api/whales/subscriptions", json={**body,"enabled":False}).status_code == 200
+
+
+def test_whale_catalog_allows_new_markets_and_delisting_never_prevents_pausing(client):
+    from whale_models import WhaleRuntime
+    seed_whale_catalog()
+    body = {"coin": "xyz:GOLD"}
+    # Being a syntactically valid xyz coin is insufficient without venue verification.
+    assert client.put("/api/whales/subscriptions", json=body).status_code == 422
+    with api.app.state.auth_session_factory() as db:
+        row = db.get(WhaleRuntime, 1)
+        row.data = {**row.data, "markets": [*row.data["markets"],
+            {"coin": "xyz:GOLD", "name": "Synthetic catalog gold perpetual"}]}
+        db.commit()
+    assert client.put("/api/whales/subscriptions", json=body).status_code == 200
+    assert client.get("/api/whales").json()["subscriptions"][0]["coin"] == "xyz:GOLD"
+    with api.app.state.auth_session_factory() as db:
+        row = db.get(WhaleRuntime, 1)
+        row.data = {**row.data, "markets": []}
+        db.commit()
+    assert client.put("/api/whales/subscriptions", json=body).status_code == 422
     assert client.put("/api/whales/subscriptions", json={**body,"enabled":False}).status_code == 200
 
 

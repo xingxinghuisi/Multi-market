@@ -1,10 +1,12 @@
-# 自动发现股票／ETF 永续巨鲸 · 第一阶段
+# 自动发现 trade.xyz 永续巨鲸
 
 ## 已实现的范围
 
 PWA「提醒 → 链上巨鲸仓位」独立于原有 Binance 聚合成交提醒。无需填写钱包地址；用户选择市场、最低仓位名义价值和同地址同市场提醒间隔，并可暂停、删除。默认阈值为 100 万美元，可从 1000 美元起设置。没有订阅时不监听公开成交、不轮询钱包。
 
-第一阶段限定 Hyperliquid 的 `xyz` 部署市场：`xyz:KORU`、`xyz:SKHY`、`xyz:NVDA`、`xyz:TSLA`。服务启动及每小时读取官方 metadata，只提供当前存在且未退市的市场。不会假设整个 xyz 目录都是股票，也不会将这些合约当成 Binance 同名 USDT 合约。仓位价值沿用官方 `positionValue` 的美元名义价值，不代表实际保证金。
+支持 Hyperliquid 的 `xyz` 部署市场，服务启动及每小时读取官方 metadata，提供目录中全部当前存在且未退市的合约，不再受 KORU、SKHY、NVDA、TSLA 四个市场的白名单限制。页面可按名称搜索；新增市场须通过最新目录核验，不能凭空输入代码创建。目录涵盖股票、ETF 及其他品种，未知品种沿用官方符号与中性的“永续合约”名称，不猜测股票分类。2026-10-11 开发核验时官方返回 114 个未退市市场；该数量会随上游目录变化，并非固定承诺。只监听用户已开启的市场，不会自动订阅全部目录。
+
+这些合约不是 Binance 同名 USDT 合约。仓位价值沿用官方 `positionValue` 的美元名义价值，不代表实际保证金。已有四个市场的订阅、阈值、通知和候选数据继续保留；退市或目录过期时仍可暂停或删除已有订阅。
 
 一条公开 WebSocket 监听已订阅市场的 trades，读取 `users` 中买卖双方的公开地址；所有有效成交均可发现候选，不限定单笔成交金额，因此拆单也有机会被发现。候选保存在数据库，REST `clearinghouseState`（`dex=xyz`）核验签名数量、平均开仓价、当前杠杆设置及名义价值。不需要账户 API Key、钱包私钥或交易权限。
 
@@ -33,8 +35,8 @@ PWA「提醒 → 链上巨鲸仓位」独立于原有 Binance 聚合成交提醒
 cd /opt/korea-market-radar
 docker build -f Dockerfile.app -t korea-market-radar-app:latest app
 docker run --rm --env-file .env.production korea-market-radar-app:latest python deployment_preflight.py
-docker compose --env-file .env.production up -d --no-deps --force-recreate api
-docker compose --env-file .env.production up -d --no-deps whale_position_worker
+docker compose --env-file .env.production up -d --no-deps --force-recreate --wait --wait-timeout 90 api
+docker compose --env-file .env.production up -d --no-deps --force-recreate whale_position_worker
 docker compose --env-file .env.production ps api whale_position_worker
 docker compose --env-file .env.production logs --since=5m --tail=30 whale_position_worker
 ```
@@ -49,7 +51,7 @@ docker compose --env-file .env.production logs --since=5m --tail=30 whale_positi
 
 ```sh
 python -m pytest app/tests -q
-node --test app/tests/mobile-core.test.mjs app/tests/service-worker.test.mjs app/tests/whales.test.mjs
+node --test app/tests/mobile-core.test.mjs app/tests/service-worker.test.mjs app/tests/whales.test.mjs app/tests/app-update.test.mjs
 node --check app/web/static/mobile.js
 node --check app/web/static/whales.js
 ```
@@ -60,7 +62,7 @@ node --check app/web/static/whales.js
 
 ## English
 
-The first release automatically discovers public wallets from both counterparties of all observed trades in selected Hyperliquid / trade.xyz stock-linked perpetuals. Users configure markets, position-value thresholds and wallet/market cooldowns without entering addresses. The initial scope is `xyz:KORU`, `xyz:SKHY`, `xyz:NVDA` and `xyz:TSLA`, validated against live venue metadata. These are distinct from Binance instruments.
+The service automatically discovers public wallets from both counterparties of observed trades in subscribed Hyperliquid / trade.xyz perpetuals. Users search the official `xyz` catalog and configure markets, position-value thresholds and wallet/market cooldowns without entering addresses. All currently listed, non-delisted xyz instruments are eligible; the initial four-market allowlist has been removed. Metadata is refreshed at startup and hourly. The catalog includes equities, ETFs and other instruments, so unfamiliar names retain neutral perpetual labels. The live catalog returned 114 markets during development verification on 2026-10-11; availability changes over time. Existing subscriptions are preserved, only enabled markets are monitored, and these are distinct from Binance instruments.
 
 Persistent candidate wallets are verified through public clearinghouse snapshots. Initial holdings are labeled discoveries; subsequent signed-quantity changes produce net opening, increase, reduction, closure or reversal events. Price-only valuation changes do not imply new trades. Entry price and leverage represent the current position snapshot, not an individual fill or historical leverage setting. Events reuse account notification history and verified Telegram recipients with durable delivery claims and bounded explicit-failure retries.
 

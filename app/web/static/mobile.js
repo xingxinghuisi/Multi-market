@@ -1,6 +1,7 @@
-import {escapeHTML as e, number as n, percent, timestamp, safeURL, kind, marketMatches, candleSeries, alertPayload, supportsSubscriptions} from "./mobile-core.js";
-import {whalePage} from "./whales.js";
-const APP_VERSION = "2026.10.11.2";
+import {escapeHTML as e, number as n, percent, timestamp, safeURL, kind, marketMatches, candleSeries, alertPayload, supportsSubscriptions} from "./mobile-core.js?v=2026.10.11.3";
+import {whalePage,matchingWhaleMarkets} from "./whales.js?v=2026.10.11.3";
+import {createAppUpdater} from "./app-update.js?v=2026.10.11.3";
+const APP_VERSION = "2026.10.11.3";
 
 const $ = selector => document.querySelector(selector);
 const content = $("#content");
@@ -347,7 +348,7 @@ async function route() {
   clearTimeout(routeAnimationTimer);
   content.classList.remove("screen-animated");
   render();window.scrollTo(0,0);content.focus({preventScroll:true});
-  if(pendingAppReload){applyAppUpdate();if(!pendingAppReload)return;}
+  if(appUpdater.pending&&applyAppUpdate())return;
   if (!reducedMotion.matches) {
     // Restart only on navigation. Quote refreshes should not replay entrance motion.
     void content.offsetWidth;
@@ -513,6 +514,14 @@ content.addEventListener("change",async event=>{
   if(event.target.name==="market"){state.searchSequence++;state.searchResults=[];$("#search-results").textContent="市场已切换，请重新搜索。";}
 });
 content.addEventListener("input",event=>{
+  if(event.target.matches("[data-whale-search]")){
+    const form=event.target.form,select=form.querySelector('[name="coin"]'),previous=select.value;
+    const matches=matchingWhaleMarkets(state.whales?.markets||[],state.whales?.subscriptions||[],event.target.value);
+    select.replaceChildren(...matches.map(m=>new Option(`${m.coin} · ${m.name}`,m.coin)));
+    if(matches.some(m=>m.coin===previous))select.value=previous;
+    form.querySelector('[type="submit"]').disabled=!matches.length;
+    form.querySelector("[data-whale-search-count]").textContent=matches.length?`${matches.length} 个市场可添加`:"没有匹配的市场；仅显示官方已核验的合约。";
+  }
   if(event.target.id==="sub-search"){
     state.subSearch=event.target.value;
     const list=$("#sub-pool-list");
@@ -591,24 +600,25 @@ function connectSocket() {
   socket.onerror=()=>socket.close();
   socket.onclose=()=>{state.socketUp=false;updateConnection();clearTimeout(reconnectTimer);reconnectTimer=setTimeout(connectSocket,reconnectDelay);reconnectDelay=Math.min(reconnectDelay*2,30000);};
 }
-let pendingAppReload=false;
+const appUpdater=createAppUpdater({version:APP_VERSION,location,storage:()=>window.sessionStorage,
+  online:()=>navigator.onLine&&!document.hidden,blocked:interacting,
+  reload:url=>location.replace(url),
+  waiting:()=>toast("新版已就绪，完成当前操作后会自动更新。"),
+  stalled:()=>toast("更新暂未完成，已停止重复刷新；当前页面可继续使用。")});
+let versionCheck=null;
 async function checkAppVersion(){
   if(!navigator.onLine||document.hidden)return;
-  try{
-    const response=await fetch("/api/client-version",{cache:"no-store",credentials:"same-origin"});
-    if(!response.ok)return;
-    const data=await response.json();
-    if(data.version&&data.version!==APP_VERSION){pendingAppReload=true;applyAppUpdate();}
-  }catch{/* A failed version check must not interrupt market data. */}
+  if(versionCheck)return versionCheck;
+  versionCheck=(async()=>{
+    try{
+      const response=await fetch("/api/client-version",{cache:"no-store",credentials:"same-origin"});
+      if(response.ok)appUpdater.offer((await response.json()).version);
+    }catch{/* A failed version check must not interrupt market data. */}
+  })();
+  try{await versionCheck;}finally{versionCheck=null;}
 }
 function applyAppUpdate() {
-  if(!pendingAppReload||!navigator.onLine)return;
-  if(interacting()) {
-    toast("新版已就绪，完成当前操作后会自动更新。");
-    return;
-  }
-  pendingAppReload=false;
-  location.reload();
+  return appUpdater.apply();
 }
 window.addEventListener("hashchange",route);
 window.addEventListener("online",()=>{updateConnection();refresh();connectSocket();checkAppVersion();});
@@ -628,10 +638,10 @@ window.addEventListener("pageshow",()=>{refresh();connectSocket();checkAppVersio
 setInterval(checkAppVersion,2*60*1000);
 if("serviceWorker" in navigator&&window.isSecureContext) {
   navigator.serviceWorker.addEventListener("controllerchange",()=>{
-    pendingAppReload=true;
-    applyAppUpdate();
+    // First installation or a changed worker alone does not require a page reload.
+    checkAppVersion();
   });
-  navigator.serviceWorker.register("/sw.js").then(registration=>{
+  navigator.serviceWorker.register(`/sw.js?v=${APP_VERSION}`,{updateViaCache:"none"}).then(registration=>{
     const check=()=>{if(navigator.onLine&&!document.hidden)registration.update().catch(()=>{});};
     check();
     window.addEventListener("pageshow",check);

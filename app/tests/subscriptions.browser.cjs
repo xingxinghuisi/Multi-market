@@ -70,6 +70,7 @@ const path = require("node:path");
       if(route.request().method()==="PUT"){arrived();await gate;}
       await route.continue();
     });
+    await page.route("**/api/client-version",route=>route.fulfill({json:{version:"2026.10.11.99"}}));
     await page.locator(".switch").filter({has:page.locator('[data-sub-toggle="longshort_digest"]')}).click();
     await pending;
     let navigations=0;
@@ -87,6 +88,7 @@ const path = require("node:path");
     release();await saved;await reloaded;
     await page.waitForLoadState("domcontentloaded");
     await page.unroute("**/api/subscriptions");
+    await page.unroute("**/api/client-version");
     await page.getByRole("heading",{name:"推送订阅",exact:true}).waitFor();
     page.off("framenavigated",track);
     const afterUpdate=await (await page.request.get(base+"/api/subscriptions")).json();

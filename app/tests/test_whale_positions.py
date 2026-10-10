@@ -179,12 +179,18 @@ def test_failed_delivery_stops_after_three_attempts_and_checks_enabled(sessions,
         assert len(calls) == 3
 
 
-def test_metadata_filters_delisted_and_non_stock_scope(monkeypatch):
+def test_metadata_discovers_all_xyz_markets_and_filters_delisted_other_dexes(monkeypatch):
     client = PublicClient()
     monkeypatch.setattr(client, "info", lambda _: {"universe": [
         {"name": COIN, "maxLeverage": 10}, {"name": "xyz:NVDA", "isDelisted": True},
-        {"name": "xyz:GOLD"}, {"name": "BTC"}]})
-    assert [m["coin"] for m in client.markets()] == [COIN]
+        {"name": "xyz:GOLD"}, {"name": "BTC"}, {"name": "other:AAPL"},
+        {"name": "xyz:New.Contract-1"}, {"name": "xyz:GOLD"}, {"name": "xyz:<bad>"},
+        None, {"name": None}]})
+    markets = client.markets()
+    assert [m["coin"] for m in markets] == ["xyz:GOLD", COIN, "xyz:New.Contract-1"]
+    gold = markets[0]
+    assert gold["name"] == "GOLD 永续合约" and "股票" not in gold["name"]
+    assert markets[1]["name"] == "韩国股票 ETF 关联永续"
 
 
 def test_additive_table_initialization_keeps_existing_users(sessions):

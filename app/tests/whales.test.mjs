@@ -1,6 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {whalePage} from "../web/static/whales.js";
+import {whalePage,matchingWhaleMarkets} from "../web/static/whales.js";
+
+test("market search uses the verified catalog, includes non-equities and excludes existing subscriptions",()=>{
+  const markets=[{coin:"xyz:KORU",name:"韩国 ETF"},{coin:"xyz:GOLD",name:"GOLD 永续合约"},{coin:"xyz:AAPL",name:"AAPL 永续合约"}];
+  const subscriptions=[{coin:"xyz:KORU",enabled:false}];
+  assert.deepEqual(matchingWhaleMarkets(markets,subscriptions," gold "),[markets[1]]);
+  assert.deepEqual(matchingWhaleMarkets(markets,subscriptions,"aapl"),[markets[2]]);
+  assert.deepEqual(matchingWhaleMarkets(markets,subscriptions,"KORU"),[]);
+  assert.deepEqual(matchingWhaleMarkets(markets,subscriptions,"fake"),[]);
+  const html=whalePage({markets,subscriptions},true);
+  assert.ok(html.includes("可选 3 个经官方目录核验的市场"));
+  assert.ok(html.includes('value="xyz:GOLD"'));
+  assert.ok(!html.includes("股票及 ETF 关联永续"));
+});
 
 test("unconfigured service shows coverage and never invents wallets or markets",()=>{
   const html=whalePage({},false);

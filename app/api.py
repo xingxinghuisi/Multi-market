@@ -2521,7 +2521,8 @@ def root():
 
     return FileResponse(
         WEB_DIR
-        / "mobile.html"
+        / "mobile.html",
+        headers={"Cache-Control": "no-cache"},
     )
 
 # =========================================================

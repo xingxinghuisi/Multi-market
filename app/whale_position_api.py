@@ -3,13 +3,13 @@ from fastapi import Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 
-from hyperliquid_whales import MARKETS, SOURCE, decimal, milliseconds
+from hyperliquid_whales import MARKET_PATTERN, SOURCE, decimal, milliseconds
 from whale_models import WhaleAddress, WhalePositionEvent, WhaleRuntime, WhaleSubscription
 
 
 class WhaleSubscriptionInput(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
-    coin: str = Field(pattern=r"^xyz:[A-Z0-9]{1,15}$")
+    coin: str = Field(pattern=MARKET_PATTERN)
     enabled: bool = True
     min_position_usd: float = Field(default=1000000, ge=1000, le=1000000000000)
     cooldown_seconds: int = Field(default=300, ge=0, le=86400)
@@ -60,7 +60,7 @@ def install_whale_routes(app, get_db, get_user):
                                                        WhaleSubscription.coin == payload.coin))
         # A source outage must never prevent pausing an existing subscription.
         pausing = sub is not None and not payload.enabled
-        if payload.coin not in MARKETS or (not pausing and not any(m["coin"] == payload.coin for m in verified)):
+        if not pausing and not any(m["coin"] == payload.coin for m in verified):
             raise HTTPException(status_code=422, detail="该市场尚未通过行情源核验，请等待巨鲸服务同步市场目录。")
         if not pausing and milliseconds() - runtime.data.get("catalog_ms", 0) > 86400000:
             raise HTTPException(status_code=503, detail="市场目录已过期，请检查巨鲸服务连接。")

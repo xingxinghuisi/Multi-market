@@ -1,6 +1,7 @@
 /* Cache only the public application shell. Financial and account data stay network-only. */
-const CACHE = "market-radar-shell-v11";
-const SHELL = ["/", "/static/mobile.css", "/static/mobile.js", "/static/mobile-core.js", "/static/whales.js",
+const CACHE = "market-radar-shell-v12";
+const VERSION = "2026.10.11.3";
+const SHELL = ["/", ...["mobile.css","mobile.js","mobile-core.js","whales.js","app-update.js"].map(name=>`/static/${name}?v=${VERSION}`),
   "/static/radar-icon.svg", "/static/radar-192.png", "/static/radar-512.png", "/static/manifest.webmanifest"];
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -13,8 +14,9 @@ self.addEventListener("activate", event => {
 self.addEventListener("fetch", event => {
   const url = new URL(event.request.url);
   if (event.request.method !== "GET" || url.origin !== self.location.origin ||
-      url.search || !SHELL.includes(url.pathname)) return;
-  event.respondWith(fetch(event.request).then(response => {
+      !SHELL.includes(url.pathname+url.search)) return;
+  // Revalidate the public shell rather than accepting a fresh but outdated HTTP cache entry.
+  event.respondWith(fetch(event.request,{cache:"no-cache"}).then(response => {
     if (response.ok) {
       const copy = response.clone();
       event.waitUntil(caches.open(CACHE).then(cache => cache.put(event.request, copy)));

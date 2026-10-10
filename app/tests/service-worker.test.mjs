@@ -28,7 +28,8 @@ test("shell assets are cached before an update activates",async()=>{
   assert.deepEqual(lifecycle,["waiting skipped"]);
   for(const url of writes){
     assert.ok(!url.startsWith("/api/")&&!url.includes("legacy"));
-    assert.ok(existsSync(new URL(url==="/"?"../web/mobile.html":`../web${url}`,import.meta.url)),url);
+    const pathname=new URL(url,"https://radar.example").pathname;
+    assert.ok(existsSync(new URL(pathname==="/"?"../web/mobile.html":`../web${pathname}`,import.meta.url)),url);
   }
 });
 test("sensitive paths, writes, queries and other origins bypass the cache",()=>{
@@ -48,4 +49,16 @@ test("activation removes old Radar caches while preserving unrelated caches",asy
   const {handlers,deleted}=worker();let work;
   handlers.activate({waitUntil:promise=>work=promise});await work;
   assert.deepEqual(deleted,["market-radar-shell-v0","market-radar-shell-v1"]);
+});
+test("public versioned resources revalidate the HTTP cache and unrelated queries bypass it",async()=>{
+  let options,response;
+  const {handlers}=worker({fetch:async(_request,opts)=>{options=opts;return new Response("fresh");}});
+  const version=readFileSync(new URL("../web/version.txt",import.meta.url),"utf8").trim();
+  handlers.fetch({request:{url:`https://radar.example/static/mobile.js?v=${version}`,method:"GET"},
+    waitUntil:()=>{},respondWith:promise=>response=promise});
+  assert.equal(await(await response).text(),"fresh");
+  assert.equal(options.cache,"no-cache");
+  let intercepted=false;
+  handlers.fetch({request:{url:`https://radar.example/static/mobile.js?v=${version}&token=private`,method:"GET"},respondWith:()=>intercepted=true});
+  assert.equal(intercepted,false);
 });

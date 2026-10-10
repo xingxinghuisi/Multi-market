@@ -10,10 +10,11 @@ import requests
 INFO_URL = "https://api.hyperliquid.xyz/info"
 WS_URL = "wss://api.hyperliquid.xyz/ws"
 DEX = "xyz"
-# A deliberately small first-stage stock/ETF scope, checked against live metadata.
-# No equivalence to same-named Binance instruments is assumed.
-MARKETS = {"xyz:KORU": "韩国股票 ETF 关联永续", "xyz:SKHY": "SK Hynix 关联永续",
-           "xyz:NVDA": "NVIDIA 关联永续", "xyz:TSLA": "Tesla 关联永续"}
+# Friendly labels only; availability always comes from the official xyz catalog.
+# Metadata does not classify all instruments as equities, so other names stay neutral.
+MARKET_LABELS = {"xyz:KORU": "韩国股票 ETF 关联永续", "xyz:SKHY": "SK Hynix 关联永续",
+                 "xyz:NVDA": "NVIDIA 关联永续", "xyz:TSLA": "Tesla 关联永续"}
+MARKET_PATTERN = r"^xyz:[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
 SOURCE = "Hyperliquid / trade.xyz"
 KINDS = {"discovered": "新发现已有仓位", "opened": "新开仓", "increased": "加仓",
          "reduced": "减仓", "closed": "平仓", "flipped": "反向开仓"}
@@ -64,9 +65,16 @@ class PublicClient:
         raw = self.info({"type": "meta", "dex": DEX})
         if not isinstance(raw, dict) or not isinstance(raw.get("universe"), list):
             raise ValueError("Invalid metadata")
-        return [{"coin": m["name"], "name": MARKETS[m["name"]],
-                 "max_leverage": m.get("maxLeverage"), "source": SOURCE}
-                for m in raw["universe"] if m.get("name") in MARKETS and not m.get("isDelisted")]
+        markets = {}
+        for item in raw["universe"]:
+            if not isinstance(item, dict) or item.get("isDelisted"):
+                continue
+            coin = item.get("name")
+            if not isinstance(coin, str) or not re.fullmatch(MARKET_PATTERN, coin):
+                continue
+            markets[coin] = {"coin": coin, "name": MARKET_LABELS.get(coin, f"{coin[4:]} 永续合约"),
+                             "max_leverage": item.get("maxLeverage"), "source": SOURCE}
+        return [markets[coin] for coin in sorted(markets)]
 
     def positions(self, address):
         return self.info({"type": "clearinghouseState", "user": address, "dex": DEX})

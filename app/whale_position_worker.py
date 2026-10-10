@@ -227,7 +227,7 @@ class Worker:
 
     async def run(self):
         initialize_whale_tables(engine)
-        log("Automatic wallet discovery started (xyz stocks/ETF perpetuals; no historical import)")
+        log("Automatic wallet discovery started (verified trade.xyz perpetuals; no historical import)")
         tasks = [asyncio.create_task(self.stream()), asyncio.create_task(self.deliveries())]
         next_config = next_catalog = next_cleanup = 0
         floors = {}

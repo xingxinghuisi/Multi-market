@@ -35,7 +35,8 @@ def main():
     with sessions() as db:
         db.add(WhaleRuntime(id=1, data={"catalog_ms":milliseconds(),"heartbeat_ms":milliseconds(),
             "started_ms":milliseconds(),"connected":True,"subscribed_coins":["xyz:KORU"],
-            "markets":[{"coin":"xyz:KORU","name":"Synthetic browser test market","max_leverage":10}]}))
+            "markets":[{"coin":"xyz:KORU","name":"Synthetic browser test market","max_leverage":10},
+                       {"coin":"xyz:GOLD","name":"Synthetic browser test non-equity market","max_leverage":10}]}))
         db.add(WhaleAddress(address=address,discovered_ms=1,last_trade_ms=1,
             checked_ms=milliseconds(),snapshot_ms=position["snapshot_ms"],positions={"xyz:KORU":position}))
         db.commit()
@@ -74,7 +75,8 @@ def main():
         node = env.get("NODE_EXECUTABLE") or shutil.which("node")
         if not node:
             raise RuntimeError("Node.js is required for browser tests")
-        return subprocess.run([node,str(Path(__file__).with_name("whales.browser.cjs"))],env=env,check=False,timeout=120).returncode
+        script=os.environ.get("RADAR_BROWSER_SCRIPT","whales.browser.cjs")
+        return subprocess.run([node,str(Path(__file__).with_name(script))],env=env,check=False,timeout=120).returncode
     finally:
         server.should_exit = True
         thread.join(timeout=5)
