@@ -49,6 +49,7 @@ from models import (
     DailyPrice,
     AlertRule,
     AlertState,
+    AlertSubscription,
     Asset,
     User,
     UserCredential,
@@ -63,6 +64,7 @@ from models import (
 from schemas import (
     AlertRuleCreate,
     AlertRuleUpdate,
+    SubscriptionUpsert,
     AssetCreate,
     AssetQuickCreate,
     AssetUpdate,
@@ -4510,6 +4512,195 @@ def delete_alert_rule(
     return {
         "deleted": True,
         "rule_id": rule_id,
+    }
+
+
+# =========================================================
+# 推送订阅
+#
+# 用户 × 币种 × 提醒类型 的订阅开关。
+# alert_type: longshort_digest / whale_print
+# =========================================================
+
+def serialize_subscription(
+    subscription,
+    asset,
+):
+
+    return {
+        "id": subscription.id,
+
+        "asset": {
+            "id": asset.id,
+            "symbol": asset.symbol,
+            "name": asset.name,
+            "asset_type": asset.asset_type,
+            "venue": asset.venue,
+            "segment": asset.segment,
+            "currency": asset.currency,
+        },
+
+        "alert_type": subscription.alert_type,
+        "enabled": subscription.enabled,
+        "config": subscription.config or {},
+        "created_at": subscription.created_at,
+    }
+
+
+def get_subscription_or_404(
+    db,
+    user_id,
+    subscription_id,
+):
+
+    subscription = db.get(
+        AlertSubscription,
+        subscription_id,
+    )
+
+    if (
+        subscription is None
+        or subscription.user_id != user_id
+    ):
+
+        raise HTTPException(
+            status_code=404,
+            detail="Subscription not found",
+        )
+
+    return subscription
+
+
+# =========================================================
+# 获取当前用户全部订阅
+# =========================================================
+
+@app.get("/api/subscriptions")
+def get_subscriptions(
+    db: Session = Depends(get_db),
+):
+
+    user = get_default_user(db)
+
+    statement = (
+        select(
+            AlertSubscription,
+            Asset,
+        )
+        .join(
+            Asset,
+            AlertSubscription.asset_id
+            == Asset.id,
+        )
+        .where(
+            AlertSubscription.user_id
+            == user.id
+        )
+        .order_by(
+            AlertSubscription.id
+        )
+    )
+
+    rows = db.execute(
+        statement
+    ).all()
+
+    return [
+        serialize_subscription(
+            subscription,
+            asset,
+        )
+        for (
+            subscription,
+            asset,
+        ) in rows
+    ]
+
+
+# =========================================================
+# 新增 / 更新订阅（upsert）
+# =========================================================
+
+@app.put("/api/subscriptions")
+def upsert_subscription(
+    payload: SubscriptionUpsert,
+    db: Session = Depends(get_db),
+):
+
+    user = get_default_user(db)
+
+    asset = get_asset_or_404(
+        db,
+        payload.asset_id,
+    )
+
+    subscription = db.scalar(
+        select(
+            AlertSubscription
+        ).where(
+            AlertSubscription.user_id
+            == user.id,
+            AlertSubscription.asset_id
+            == payload.asset_id,
+            AlertSubscription.alert_type
+            == payload.alert_type,
+        )
+    )
+
+    if subscription is None:
+
+        subscription = AlertSubscription(
+            user_id=user.id,
+            asset_id=payload.asset_id,
+            alert_type=payload.alert_type,
+            enabled=payload.enabled,
+            config=payload.config,
+        )
+
+        db.add(subscription)
+
+    else:
+
+        subscription.enabled = payload.enabled
+
+        if payload.config is not None:
+            subscription.config = payload.config
+
+    db.commit()
+    db.refresh(subscription)
+
+    return serialize_subscription(
+        subscription,
+        asset,
+    )
+
+
+# =========================================================
+# 删除单条订阅
+# =========================================================
+
+@app.delete(
+    "/api/subscriptions/{subscription_id}"
+)
+def delete_subscription(
+    subscription_id: int,
+    db: Session = Depends(get_db),
+):
+
+    user = get_default_user(db)
+
+    subscription = get_subscription_or_404(
+        db,
+        user.id,
+        subscription_id,
+    )
+
+    db.delete(subscription)
+    db.commit()
+
+    return {
+        "deleted": True,
+        "subscription_id": subscription_id,
     }
 
 
