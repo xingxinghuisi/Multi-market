@@ -1645,12 +1645,25 @@ async def run_krx_polling(
 # Main
 # =========================================================
 
+async def supervise_provider(name, runner, retry_seconds=5):
+    """Restart only the failed source; never cancel healthy market streams."""
+    while True:
+        try:
+            await runner()
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            print(f"[{name}] Provider error: {type(error).__name__}; retrying", flush=True)
+        # An empty asset list may become nonempty after startup.
+        await asyncio.sleep(retry_seconds)
+
+
 async def main():
 
     await asyncio.gather(
-        run_binance_batch(),
-        run_binance_futures_batch(),
-        run_moomoo_realtime(),
+        supervise_provider("BINANCE SPOT", run_binance_batch),
+        supervise_provider("BINANCE FUTURES", run_binance_futures_batch),
+        supervise_provider("MOOMOO", run_moomoo_realtime),
     )
 
 async def run_infoway_korea():

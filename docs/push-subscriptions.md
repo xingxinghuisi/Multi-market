@@ -45,6 +45,12 @@ docker compose --env-file .env.production ps
 
 ## 验证
 
+### OpenD 不可用时的行情隔离
+
+行情 worker 的 Moomoo 连接使用 SDK 异步连接，并为同步订阅请求设置连接等待上限。OpenD 停止、未登录或正在等待登录限流解除时，不应阻塞 Binance Spot/Futures 行情。各行情源独立重试；启动时没有资产的源也会定期重新检查新增资产。SDK 连接到 OpenD 的重试不等于重新登录 Moomoo 账户。
+
+若旧版在停止 OpenD 后加密行情不再更新，拉取本修复、重建镜像，并只重建 `market_worker`；无需在 Moomoo 限流期间重启 OpenD。通过 worker 的 `[LIVE]` 行和数据库 `market_quotes.event_time` 的推进验证恢复。对应回归测试为 `tests/test_market_isolation.py`。
+
 从 `app/` 执行：
 
 ```sh
@@ -66,3 +72,5 @@ Workers collect data and submit stable event keys to the authenticated internal 
 Startup adds subscription and delivery tables without replacing existing data. A first-time upgrade preserves the legacy owner's hourly selection only when no subscription table exists. Existing subscriptions and disabled settings remain intact.
 
 Deploy the API and both subscription workers together using the existing Docker Compose environment and data volume. Aggregated trades do not identify individual whales or wallets. The current deployment assumes one API process; multi-process cooldown coordination requires a shared lock or queue.
+
+The market worker uses the Moomoo SDK's asynchronous connection mode so an unavailable OpenD cannot block Binance streams. Each source retries independently, including sources with no assets at startup. Deploy this isolation fix by rebuilding the app image and recreating only `market_worker`; leave OpenD stopped while account login is rate-limited.

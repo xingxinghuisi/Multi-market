@@ -1599,6 +1599,9 @@ class MoomooRealtimeProvider:
             OpenQuoteContext(
                 host=self.host,
                 port=self.port,
+                # The SDK's synchronous constructor retries forever if OpenD is down.
+                # Binance shares this event loop and must continue receiving quotes.
+                is_async_connect=True,
             )
         )
 
@@ -1610,18 +1613,17 @@ class MoomooRealtimeProvider:
             )
         )
 
-        quote_ctx.set_handler(
-            handler
-        )
-
         refresh_task = None
 
         try:
 
+            quote_ctx.set_handler(handler)
+            quote_ctx.set_sync_query_connect_timeout(5)
+
             print()
             print(
                 "Moomoo OpenD "
-                "连接成功"
+                "异步连接已启动"
             )
 
             # 第一次立即同步
@@ -1659,14 +1661,15 @@ class MoomooRealtimeProvider:
 
         finally:
 
-            if (
-                refresh_task
-                is not None
-            ):
-
-                refresh_task.cancel()
-
-            quote_ctx.close()
+            try:
+                if refresh_task is not None:
+                    refresh_task.cancel()
+                    try:
+                        await refresh_task
+                    except asyncio.CancelledError:
+                        pass
+            finally:
+                await asyncio.to_thread(quote_ctx.close)
 
     # =====================================================
     # Fixed Streaming Compatibility
