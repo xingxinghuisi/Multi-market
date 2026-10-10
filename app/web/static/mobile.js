@@ -1,5 +1,6 @@
 import {escapeHTML as e, number as n, percent, timestamp, safeURL, kind, marketMatches, candleSeries, alertPayload, supportsSubscriptions} from "./mobile-core.js";
-const APP_VERSION = "2026.10.11.1";
+import {whalePage} from "./whales.js";
+const APP_VERSION = "2026.10.11.2";
 
 const $ = selector => document.querySelector(selector);
 const content = $("#content");
@@ -38,7 +39,8 @@ applyTheme();
 const state = {assets:[], quotes:[], watchlist:[], hiddenAssets:[], alerts:[], subs:[], alertTab:store.get("alertTab","rules")==="subs"?"subs":"rules", subSheet:false, subSearch:"", subOpen:new Set(), news:[], notifications:[], profile:null, bot:null, telegramChallengeSent:false, session:null,
   errors:{}, loading:true, filter:"all", newsFilter:"all", notificationFilter:"all", detail:new Map(), searchResults:[], searchSequence:0,
   refreshSeconds:[15,30,60].includes(Number(store.get("refresh", "30")))?Number(store.get("refresh", "30")):30, refreshing:false, socket:null, socketUp:false, lastSync:null};
-const endpoints = {assets:"/api/assets", quotes:"/api/market/latest", watchlist:"/api/watchlist", hiddenAssets:"/api/client-assets/hidden", alerts:"/api/alert-rules", subs:"/api/subscriptions", news:"/api/news?limit=100", notifications:"/api/notifications?limit=100", profile:"/api/client-profile"};
+state.whales={markets:[],subscriptions:[],positions:[],events:[],runtime:{}};
+const endpoints = {assets:"/api/assets", quotes:"/api/market/latest", watchlist:"/api/watchlist", hiddenAssets:"/api/client-assets/hidden", alerts:"/api/alert-rules", subs:"/api/subscriptions", whales:"/api/whales", news:"/api/news?limit=100", notifications:"/api/notifications?limit=100", profile:"/api/client-profile"};
 const operatorNames = {crossing_up:"向上突破",crossing_down:"向下跌破",step:"每变动"};
 const timeText = value => timestamp(value)?.toLocaleString("zh-CN",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}) ?? "时间未提供";
 const changeClass = value => value == null ? "muted" : Number(value) >= 0 ? "up" : "down";
@@ -83,7 +85,7 @@ async function request(url, {method="GET", body, signal}={}) {
       const error = new Error(`请求失败（${response.status}）：${detail}`);
       error.status = response.status;
       if(response.status===401&&state.session&&url!=="/api/auth/login") {
-        state.session=null;state.watchlist=[];state.hiddenAssets=[];state.alerts=[];state.subs=[];state.notifications=[];state.profile=null;
+        state.session=null;state.whales={markets:[],subscriptions:[],positions:[],events:[],runtime:{}};state.watchlist=[];state.hiddenAssets=[];state.alerts=[];state.subs=[];state.notifications=[];state.profile=null;
         state.socket?.close();location.hash="login";
       }
       throw error;
@@ -101,7 +103,7 @@ async function request(url, {method="GET", body, signal}={}) {
 async function load(keys) {
   await Promise.all(keys.map(async key=>{
     try{state[key]=await request(endpoints[key]);delete state.errors[key];if(key==="quotes")state.lastSync=new Date();}
-    catch(error){state.errors[key]=`${({assets:"资产",quotes:"行情",watchlist:"关注列表",hiddenAssets:"个人目录",alerts:"提醒规则",subs:"推送订阅",news:"新闻",notifications:"通知",profile:"账户"})[key]}加载失败。${error.message}`;}
+    catch(error){state.errors[key]=`${({assets:"资产",quotes:"行情",watchlist:"关注列表",hiddenAssets:"个人目录",alerts:"提醒规则",subs:"推送订阅",whales:"链上巨鲸",news:"新闻",notifications:"通知",profile:"账户"})[key]}加载失败。${error.message}`;}
   }));
   updateConnection();
 }
@@ -170,11 +172,11 @@ function catalog() {
 }
 function alerts() {
   const tab=state.alertTab==="subs"?"subs":"rules";
-  const seg=`<div class="seg-tabs" role="tablist" aria-label="提醒类型"><button data-action="alert-tab" data-tab="rules" role="tab" aria-selected="${tab==="rules"}" class="${tab==="rules"?"active":""}">价格提醒</button><button data-action="alert-tab" data-tab="subs" role="tab" aria-selected="${tab==="subs"}" class="${tab==="subs"?"active":""}">推送订阅</button></div>`;
+  const seg=`<div class="seg-tabs" role="tablist" aria-label="提醒类型"><button data-action="alert-tab" data-tab="rules" role="tab" aria-selected="${tab==="rules"}" class="${tab==="rules"?"active":""}">价格提醒</button><button data-action="alert-tab" data-tab="subs" role="tab" aria-selected="${tab==="subs"}" class="${tab==="subs"?"active":""}">推送订阅</button></div><a class="menu-row card whale-entry" href="#whales"><span>🐋 链上巨鲸仓位<small>自动发现钱包 · Hyperliquid / trade.xyz</small></span><span>→</span></a>`;
   if(tab==="subs")return subscriptionsPage(seg);
   return heading("价格提醒","STAY ONE STEP AHEAD",linkButton("#create-alert","＋ 创建提醒",true))+seg+errorBox("alerts")+`<div class="card">${state.alerts.length?state.alerts.map(rule=>`<article class="rule"><div class="rule-head"><div><h3><a href="#asset/${rule.asset.id}">${e(rule.asset.symbol)}</a> <span class="tag">${kind(rule.asset)}</span></h3><p>${e(({price:"价格",change_pct:"涨跌幅",price_change:"价格变化"})[rule.metric]||rule.metric)}${e(operatorNames[rule.operator]||rule.operator)} <strong>${n(rule.value,8)} ${rule.metric==="change_pct"?"%":e(rule.asset.currency)}</strong></p><small>冷却 ${rule.cooldown_seconds} 秒${rule.operator==="step"?` · 初始锚点 ${n(rule.step_anchor,8)}`:""}</small></div><span class="tag">${rule.enabled?"监控中":"已暂停"}</span></div><div class="actions"><button data-action="toggle-alert" data-id="${rule.id}">${rule.enabled?"暂停":"启用"}</button><button class="danger" data-action="delete-alert" data-id="${rule.id}">删除</button></div></article>`).join(""):empty("还没有价格提醒","选择已关注资产，设置你的第一个触发条件。",linkButton("#create-alert","创建提醒"))}</div><div class="notice">提醒由现有行情服务触发，Telegram 由服务端配置发送。当前未接入手机系统推送。</div>`;
 }
-const subTypeNames={longshort_digest:"1H 多空播报",whale_print:"巨鲸大单"};
+const subTypeNames={longshort_digest:"1H 多空播报",whale_print:"巨鲸大单",whale_position:"链上巨鲸"};
 function subGroups() {
   const map=new Map();
   for(const s of state.subs) {
@@ -219,7 +221,7 @@ function createAlert(id) {
 function notifications() {
   const rows=state.notifications.filter(row=>state.notificationFilter==="all"||row.category===state.notificationFilter);
   const categories=[...new Set(state.notifications.map(row=>row.category))];
-  return heading("通知中心","NOTIFICATIONS")+`<div class="filters"><button data-notification-filter="all" class="${state.notificationFilter==="all"?"active":""}">全部</button>${categories.map(category=>`<button data-notification-filter="${e(category)}" class="${state.notificationFilter===category?"active":""}">${e(({price:"价格提醒",news:"新闻提醒",price_alert:"价格提醒",news_alert:"新闻提醒",longshort_digest:"1H 多空播报",whale_print:"巨鲸大单"})[category]||category)}</button>`).join("")}</div>`+errorBox("notifications")+`<div class="card">${rows.length?rows.map(row=>`<article class="news-item"><div class="news-meta"><span class="tag">${e(row.channel)}</span><span>${timeText(row.created_at)}</span><span>${e(({sent:"已发送",failed:"发送失败",pending:"待发送",in_app:"站内记录"})[row.status]||row.status)}</span></div><h3>${e(row.title)}</h3><p class="notification-text">${e(row.message)}</p>${row.asset_id?`<a class="inline-link" href="#asset/${row.asset_id}">查看资产 →</a>`:""}</article>`).join(""):empty("暂无通知记录","价格、新闻、多空播报和巨鲸提醒触发后会显示在这里。")}</div><p class="quote-caption">显示最近 100 条通知。发送状态来自服务端，不代表设备已读。</p>`;
+  return heading("通知中心","NOTIFICATIONS")+`<div class="filters"><button data-notification-filter="all" class="${state.notificationFilter==="all"?"active":""}">全部</button>${categories.map(category=>`<button data-notification-filter="${e(category)}" class="${state.notificationFilter===category?"active":""}">${e(({price:"价格提醒",news:"新闻提醒",price_alert:"价格提醒",news_alert:"新闻提醒",longshort_digest:"1H 多空播报",whale_print:"巨鲸大单",whale_position:"链上巨鲸"})[category]||category)}</button>`).join("")}</div>`+errorBox("notifications")+`<div class="card">${rows.length?rows.map(row=>`<article class="news-item"><div class="news-meta"><span class="tag">${e(row.channel)}</span><span>${timeText(row.created_at)}</span><span>${e(({sent:"已发送",failed:"发送失败",pending:"待发送",in_app:"站内记录",cancelled:"已取消"})[row.status]||row.status)}</span></div><h3>${e(row.title)}</h3><p class="notification-text">${e(row.message)}</p>${row.asset_id?`<a class="inline-link" href="#asset/${row.asset_id}">查看资产 →</a>`:""}</article>`).join(""):empty("暂无通知记录","价格、新闻、多空播报和巨鲸提醒触发后会显示在这里。")}</div><p class="quote-caption">显示最近 100 条通知。发送状态来自服务端，不代表设备已读。</p>`;
 }
 function news() {
   const rows=state.news.filter(row=>{
@@ -328,10 +330,11 @@ function register() {
 let installPrompt=null;
 function render() {
   const {page,id}=current();
-  const pages={home,watchlist,catalog,news,alerts,notifications,profile,settings,welcome,login,register,add:addAsset,"create-alert":()=>createAlert(id),asset:()=>detail(id)};
+  const pages={home,watchlist,catalog,news,alerts,whales:()=>errorBox("whales")+whalePage(state.whales,state.profile?.telegram_configured),notifications,profile,settings,welcome,login,register,add:addAsset,"create-alert":()=>createAlert(id),asset:()=>detail(id)};
   content.innerHTML=state.loading&&!["welcome","login","register"].includes(page)?empty("正在读取你的工作区…"):(pages[page]||(()=>back()+empty("找不到这个页面")))();
   document.title=`${({home:"市场总览",watchlist:"我的关注",catalog:"资产目录",news:"新闻中心",alerts:"价格提醒",notifications:"通知中心",profile:"个人中心",settings:"设置",welcome:"欢迎",login:"登录",register:"创建账户",add:"添加资产","create-alert":"创建提醒",asset:"资产详情"})[page]||"MIRAO"} · MIRAO`;
-  const active=({asset:"watchlist",catalog:"watchlist",add:"watchlist","create-alert":"alerts",notifications:"alerts",settings:"profile"})[page]||page;
+  const active=({asset:"watchlist",catalog:"watchlist",add:"watchlist","create-alert":"alerts",notifications:"alerts",whales:"alerts",settings:"profile"})[page]||page;
+  if(page==="whales")document.title="链上巨鲸仓位 · MIRAO";
   document.querySelectorAll("[data-page]").forEach(a=>{if(a.dataset.page===active)a.setAttribute("aria-current","page");else a.removeAttribute("aria-current");});
   nav.hidden=["welcome","login","register"].includes(page);
   requestAnimationFrame(positionNavIndicator);
@@ -353,6 +356,7 @@ async function route() {
   }
   const {page,id}=current();
   if(page==="asset")await loadDetail(id);
+  if(page==="whales"){await load(["whales"]);if(current().page==="whales"&&!interacting())render();}
   if(page==="settings"&&state.bot===null&&state.profile?.telegram_bot_available){
     state.bot={};
     try{state.bot=await request("/api/client-profile/telegram/bot");}catch{/* Chat ID binding remains available. */}
@@ -363,11 +367,11 @@ async function refresh() {
   if(state.refreshing||!state.session||document.hidden||!navigator.onLine)return;
   state.refreshing=true;
   try {
-    const before=JSON.stringify([state.assets,state.watchlist,state.hiddenAssets,state.alerts,state.subs,state.news,state.notifications,state.profile,state.errors]);
+    const before=JSON.stringify([state.assets,state.watchlist,state.hiddenAssets,state.alerts,state.subs,state.news,state.notifications,state.profile,state.errors,current().page==="whales"?state.whales:null]);
     await load(Object.keys(endpoints));
     paintQuotes();
-    if(before!==JSON.stringify([state.assets,state.watchlist,state.hiddenAssets,state.alerts,state.subs,state.news,state.notifications,state.profile,state.errors])&&
-       ["home","watchlist","catalog","asset","alerts","news","notifications","profile","settings"].includes(current().page)&&!interacting())render();
+    if(before!==JSON.stringify([state.assets,state.watchlist,state.hiddenAssets,state.alerts,state.subs,state.news,state.notifications,state.profile,state.errors,current().page==="whales"?state.whales:null])&&
+       ["home","watchlist","catalog","asset","alerts","whales","news","notifications","profile","settings"].includes(current().page)&&!interacting())render();
     const {page,id}=current();
     const asset=state.assets.find(a=>a.id===id);
     if(page==="asset"&&asset?.venue==="BINANCE"&&kind(asset)==="合约")await loadMetrics(id);
@@ -403,9 +407,14 @@ content.addEventListener("click",async event=>{
     if(button.dataset[attribute]!==undefined){state[key]=button.dataset[attribute];render();return;}
   }
   const {action,id}=button.dataset;
+  if(action==="whale-refresh"){await mutate(button,async()=>{},["whales"]);return;}
+  if(action==="whale-delete"&&confirm("删除这个市场的链上巨鲸订阅？")){
+    await mutate(button,()=>request(`/api/whales/subscriptions/${id}`,{method:"DELETE"}),["whales"]);return;
+  }
   if(action==="alert-tab"){state.alertTab=button.dataset.tab==="subs"?"subs":"rules";store.set("alertTab",state.alertTab);render();return;}
   if(action==="start"){store.set("welcome","seen");location.hash=state.session?"home":"login";}
   if(action==="logout")await mutate(button,async()=>{
+    state.whales={markets:[],subscriptions:[],positions:[],events:[],runtime:{}};
     await request("/api/auth/logout",{method:"POST"});state.session=null;
     state.watchlist=[];state.hiddenAssets=[];state.alerts=[];state.subs=[];state.notifications=[];state.profile=null;state.bot=null;
     state.socket?.close();location.hash="login";toast("已退出登录");
@@ -513,6 +522,9 @@ content.addEventListener("input",event=>{
 content.addEventListener("submit",async event=>{
   event.preventDefault();const form=event.target, values=Object.fromEntries(new FormData(form));
   const button=form.querySelector('[type="submit"]');if(button.disabled)return;
+  if(form.classList.contains("whale-subscription-form")){
+    await mutate(button,async()=>{await request("/api/whales/subscriptions",{method:"PUT",body:{coin:values.coin,enabled:values.enabled==="on",min_position_usd:Number(values.min_position_usd),cooldown_seconds:Number(values.cooldown_seconds)}});toast("巨鲸订阅已保存；服务会自动发现地址。");},["whales"]);return;
+  }
   if(form.id==="login-form"||form.id==="register-form") {
     button.disabled=true;
     const error=form.querySelector(".form-error");error.textContent="";

@@ -174,6 +174,8 @@ app.mount(
 )
 
 from mobile_api import install_mobile_routes
+from whale_models import initialize_whale_tables
+from whale_position_api import install_whale_routes
 from subscription_service import initialize_subscription_tables, supports_subscription, subscription_config
 
 
@@ -185,6 +187,7 @@ async def start_market_broadcaster():
     Base.metadata.create_all(database_engine, tables=[UserCredential.__table__, UserSession.__table__,
                                                      UserHiddenAsset.__table__, TelegramChallenge.__table__], checkfirst=True)
     initialize_subscription_tables(database_engine)
+    initialize_whale_tables(database_engine)
 
     app.state.market_broadcast_task = (
         asyncio.create_task(
@@ -4718,4 +4721,5 @@ def delete_subscription(
 
 
 install_mobile_routes(app, get_db, get_default_user, lambda url: _binance_read_json(url))
+install_whale_routes(app, get_db, get_default_user)
 install_auth(app, get_db)

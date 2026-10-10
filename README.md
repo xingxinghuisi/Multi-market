@@ -25,6 +25,8 @@ $env:RADAR_ALLOW_HTTP_LOCAL="1"
 
 ## 部署上下文
 
+「提醒 → 链上巨鲸仓位」新增 Hyperliquid / trade.xyz 股票及 ETF 永续的自动钱包发现与真实仓位核验，无需填写地址。第一阶段支持官方目录中可用的 KORU、SKHY、NVDA、TSLA，按账户配置阈值和 Telegram 推送；它与 Binance 聚合成交提醒是两种不同功能。覆盖范围、数据口径、升级及测试见 [链上巨鲸说明](docs/whale-positions.md)。
+
 「提醒 → 推送订阅」支持按币种管理 1H 多空播报和巨鲸大额聚合成交提醒，独立设置阈值与间隔。合约详情显示完整周期多空数据，两类事件统一进入个人通知中心与已绑定的 Telegram。订阅不修改行情采集开关。升级方式和数据边界见 [推送订阅说明](docs/push-subscriptions.md)。
 
 现有 `Dockerfile.app` 需要 `requirements.txt`；该文件仅在 `app/` 中存在，因此应用镜像必须使用 `app/` 作为构建上下文。例如：

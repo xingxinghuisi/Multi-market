@@ -381,3 +381,78 @@ def test_partial_futures_metrics_leave_missing_values_blank(client, monkeypatch)
     assert data["last_funding_rate"] is None
     assert data["open_interest"] is None
     assert data["unavailable"] == ["open_interest"]
+
+
+def seed_whale_catalog():
+    from hyperliquid_whales import milliseconds
+    from whale_models import WhaleRuntime
+    with api.app.state.auth_session_factory() as db:
+        db.add(WhaleRuntime(id=1, data={"catalog_ms": milliseconds(), "heartbeat_ms": milliseconds(),
+            "markets": [{"coin": "xyz:KORU", "name": "Synthetic test market", "max_leverage": 10}]}))
+        db.commit()
+
+
+def test_whale_subscriptions_are_private_and_require_verified_markets(client):
+    from fastapi.testclient import TestClient
+    from whale_models import WhaleSubscription
+    anonymous = TestClient(api.app)
+    assert anonymous.get("/api/whales").status_code == 401
+    body = {"coin": "xyz:KORU", "min_position_usd": 1000000}
+    assert client.put("/api/whales/subscriptions", json=body).status_code == 422
+    seed_whale_catalog()
+    assert client.put("/api/whales/subscriptions", json={**body, "coin": "KORUUSDT"}).status_code == 422
+    assert client.put("/api/whales/subscriptions", json={**body, "coin": "xyz:FAKE"}).status_code == 422
+    assert client.put("/api/whales/subscriptions", json={**body, "min_position_usd": 0}).status_code == 422
+    assert client.put("/api/whales/subscriptions", json={**body, "address": "0x123"}).status_code == 422
+    result = client.put("/api/whales/subscriptions", json=body)
+    assert result.status_code == 200
+    data = client.get("/api/whales")
+    assert data.headers["cache-control"] == "no-store"
+    assert len(data.json()["subscriptions"]) == 1
+    assert "private-test-target" not in data.text
+    assert data.json()["events"] == [] and data.json()["positions"] == []
+    with api.app.state.auth_session_factory() as db:
+        other = db.query(User).filter_by(username="other").one()
+        sub = WhaleSubscription(user_id=other.id, coin="xyz:KORU", started_ms=0)
+        db.add(sub); db.commit()
+        other_id = sub.id
+    assert client.delete(f"/api/whales/subscriptions/{other_id}").status_code == 404
+    assert client.delete(f'/api/whales/subscriptions/{result.json()["id"]}').status_code == 200
+    assert client.get("/api/whales").json()["subscriptions"] == []
+
+
+def test_whale_updates_require_csrf_and_stale_catalog_is_rejected(client):
+    from whale_models import WhaleRuntime
+    seed_whale_catalog()
+    body = {"coin": "xyz:KORU"}
+    assert client.put("/api/whales/subscriptions", json=body).status_code == 200
+    assert client.put("/api/whales/subscriptions", json=body, headers={"X-CSRF-Token": "wrong"}).status_code == 403
+    with api.app.state.auth_session_factory() as db:
+        row = db.get(WhaleRuntime, 1)
+        row.data = {**row.data, "catalog_ms": 1}
+        db.commit()
+    assert client.put("/api/whales/subscriptions", json=body).status_code == 503
+    assert client.put("/api/whales/subscriptions", json={**body,"enabled":False}).status_code == 200
+
+
+def test_whale_feed_filters_threshold_and_flags_stale_snapshots(client):
+    from hyperliquid_whales import milliseconds, position_event
+    from whale_models import WhaleAddress, WhalePositionEvent, WhaleSubscription
+    seed_whale_catalog()
+    address = "0x" + "a" * 40
+    p = {"qty": "100000", "notional_usd": "2000000", "entry_price": "19.5", "leverage": "10", "leverage_type": "isolated"}
+    with api.app.state.auth_session_factory() as db:
+        owner = db.query(User).filter_by(username="default").one()
+        db.add(WhaleSubscription(user_id=owner.id, coin="xyz:KORU", started_ms=0, min_position_usd=1000000))
+        db.add(WhaleAddress(address=address, discovered_ms=1, last_trade_ms=1,
+            checked_ms=milliseconds(), snapshot_ms=milliseconds()-240000, positions={"xyz:KORU": p}))
+        event = position_event(address, "xyz:KORU", None, p, milliseconds())
+        db.add(WhalePositionEvent(event_key=event["event_key"], address=address, coin="xyz:KORU",
+            kind="discovered", qualifying_usd=2000000, observed_ms=milliseconds(), payload=event))
+        db.commit()
+    result = client.get("/api/whales").json()
+    assert len(result["positions"]) == 1 and result["positions"][0]["stale"] is True
+    assert result["events"][0]["kind"] == "discovered"
+    assert client.put("/api/whales/subscriptions", json={"coin":"xyz:KORU", "min_position_usd":3000000}).status_code == 200
+    result = client.get("/api/whales").json()
+    assert result["positions"] == [] and result["events"] == []
