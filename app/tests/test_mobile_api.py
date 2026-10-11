@@ -478,3 +478,53 @@ def test_whale_feed_filters_threshold_and_flags_stale_snapshots(client):
     assert client.put("/api/whales/subscriptions", json={"coin":"xyz:KORU", "min_position_usd":3000000}).status_code == 200
     result = client.get("/api/whales").json()
     assert result["positions"] == [] and result["events"] == []
+
+
+def test_whale_policy_settings_validate_and_legacy_clients_preserve_new_fields(client):
+    seed_whale_catalog()
+    body = {"coin": "xyz:KORU", "min_change_usd": 12000, "min_change_pct": 1.2,
+            "aggregation_seconds": 180, "priority_events": False}
+    assert client.put("/api/whales/subscriptions", json=body).status_code == 200
+    sub = client.get("/api/whales").json()["subscriptions"][0]
+    assert all(sub[key] == value for key, value in body.items())
+    assert client.put("/api/whales/subscriptions", json={"coin": "xyz:KORU", "cooldown_seconds": 90}).status_code == 200
+    sub = client.get("/api/whales").json()["subscriptions"][0]
+    assert sub["cooldown_seconds"] == 90
+    assert all(sub[key] == value for key, value in body.items())
+    for key, value in [("min_change_usd", -1), ("min_change_pct", -1), ("min_change_pct", 1001),
+                       ("aggregation_seconds", 3601), ("aggregation_seconds", .5)]:
+        assert client.put("/api/whales/subscriptions", json={**body, key: value}).status_code == 422
+    zeros = {**body, "min_change_usd": 0, "min_change_pct": 0, "aggregation_seconds": 0}
+    assert client.put("/api/whales/subscriptions", json=zeros).status_code == 200
+
+
+@pytest.mark.parametrize("action", ["change", "pause", "delete"])
+def test_whale_setting_changes_clear_pending_batches_and_delete_policy(client, action):
+    from sqlalchemy import select
+    from hyperliquid_whales import milliseconds, position_event
+    from whale_models import WhaleAdjustmentBatch, WhaleEventDecision, WhalePositionEvent, WhalePushPolicy, WhaleSubscription
+    from whale_position_service import process_event
+    seed_whale_catalog()
+    ident = client.put("/api/whales/subscriptions", json={"coin": "xyz:KORU"}).json()["id"]
+    with api.app.state.auth_session_factory() as db:
+        sub = db.get(WhaleSubscription, ident)
+        stamp = milliseconds()
+        old = {"qty": "100000", "notional_usd": "2000000", "entry_price": "19.5",
+               "leverage": "3", "leverage_type": "isolated", "snapshot_ms": stamp-1000}
+        payload = position_event("0x"+"a"*40, sub.coin, old, {**old, "qty": "100001", "notional_usd": "2000020"}, stamp)
+        event = WhalePositionEvent(event_key=payload["event_key"], address=payload["address"], coin=sub.coin,
+            kind=payload["kind"], qualifying_usd=2000020, observed_ms=stamp, payload=payload)
+        db.add(event); db.commit()
+        assert process_event(db, event, sub) == "buffering"
+        assert db.scalar(select(WhaleAdjustmentBatch)) is not None
+        user_id, key = sub.user_id, event.event_key
+    if action == "delete":
+        assert client.delete(f"/api/whales/subscriptions/{ident}").status_code == 200
+    else:
+        update = {"enabled": False} if action == "pause" else {"min_change_usd": 6000}
+        assert client.put("/api/whales/subscriptions", json={"coin": "xyz:KORU", **update}).status_code == 200
+    with api.app.state.auth_session_factory() as db:
+        assert db.scalar(select(WhaleAdjustmentBatch)) is None
+        assert db.get(WhaleEventDecision, (user_id, key)).outcome in {"inactive", "settings_changed"}
+        if action == "delete":
+            assert db.get(WhalePushPolicy, ident) is None

@@ -222,7 +222,8 @@ def event_text(event):
         action = f"新开{side}"
     elif kind in {"increased", "reduced"}:
         change = abs(abs(decimal(event["qty"])) - abs(decimal(event["previous_qty"])))
-        action = f"{side}{KINDS[kind]} {_plain_number(change)}"
+        cumulative = "累计" if (event.get("aggregation") or {}).get("event_count", 1) > 1 else ""
+        action = f"{side}{cumulative}{KINDS[kind]} {_plain_number(change)}"
     elif kind == "flipped":
         action = "空单转多单" if event["side"] == "long" else "多单转空单"
     else:
@@ -247,5 +248,9 @@ def event_text(event):
             lines.append(f"浮动盈亏：{sign}${abs(amount):,.2f}")
     lines.append(f"地址：{event['address'][:8]}…{event['address'][-6:]}")
     stamp = datetime.fromtimestamp(event["snapshot_ms"] / 1000, timezone(timedelta(hours=8))).strftime("%m/%d %H:%M")
+    if (event.get("aggregation") or {}).get("event_count", 1) > 1:
+        start = datetime.fromtimestamp(event["aggregation"]["from_ms"] / 1000,
+                                      timezone(timedelta(hours=8))).strftime("%m/%d %H:%M")
+        stamp = f"{start}–{stamp}"
     lines.append(f"trade.xyz · {stamp} 北京时间")
     return title, "\n".join(lines)

@@ -17,7 +17,8 @@ from websockets_proxy import Proxy, proxy_connect
 from database import SessionLocal, engine
 import models  # Register the existing referenced tables; never recreate their data.
 from hyperliquid_whales import PublicAPIError, PublicClient, WS_URL, address_value, decimal, milliseconds, parse_positions, position_event
-from whale_models import (WhaleAddress, WhalePositionDelivery, WhalePositionEvent, WhaleRuntime,
+from whale_models import (WhaleAddress, WhaleEventDecision, WhaleMarketAddress,
+                          WhalePositionDelivery, WhalePositionEvent, WhaleRuntime,
                           WhaleSubscription, initialize_whale_tables)
 from whale_position_service import deliver_pending
 from whale_execution import execution_details, fill_window
@@ -33,6 +34,7 @@ def remember_trades(trades, coins, cap):
     """All valid counterparties are candidates, including small/split fills."""
     now = milliseconds()
     candidates = {}
+    market_trades = {}
     for trade in trades:
         if not isinstance(trade, dict) or trade.get("coin") not in coins:
             continue
@@ -49,9 +51,12 @@ def remember_trades(trades, coins, cap):
             address = address_value(value)
             if address:
                 candidates[address] = max(candidates.get(address, 0), stamp)
+                key = (trade["coin"], address)
+                market_trades[key] = max(market_trades.get(key, 0), stamp)
     dropped = 0
     with SessionLocal() as db:
         count = db.scalar(select(func.count()).select_from(WhaleAddress))
+        accepted = set()
         for address, stamp in candidates.items():
             row = db.get(WhaleAddress, address)
             if row is None:
@@ -66,6 +71,16 @@ def remember_trades(trades, coins, cap):
                 row.last_trade_ms = stamp
                 # Keep hot wallets responsive, but never query the same one faster than 30s.
                 row.next_check_ms = min(row.next_check_ms, max(now, row.checked_ms + 30000))
+            accepted.add(address)
+        db.flush()
+        for (coin, address), stamp in market_trades.items():
+            if address not in accepted:
+                continue
+            link = db.get(WhaleMarketAddress, (coin, address))
+            if link is None:
+                db.add(WhaleMarketAddress(coin=coin, address=address, first_seen_ms=now, last_trade_ms=stamp))
+            else:
+                link.last_trade_ms = max(link.last_trade_ms, stamp)
         db.commit()
     return dropped, max(candidates.values(), default=0)
 
@@ -147,6 +162,7 @@ def housekeeping():
     with SessionLocal() as db:
         cutoff = milliseconds() - 7 * 86400000
         old_keys = select(WhalePositionEvent.event_key).where(WhalePositionEvent.observed_ms < cutoff)
+        db.execute(delete(WhaleEventDecision).where(WhaleEventDecision.event_key.in_(old_keys)))
         db.execute(delete(WhalePositionDelivery).where(WhalePositionDelivery.event_key.in_(old_keys)))
         db.execute(delete(WhalePositionEvent).where(WhalePositionEvent.observed_ms < cutoff))
         # Reclaim cold, verified-empty candidates only. Never evict a known open position.
@@ -154,6 +170,7 @@ def housekeeping():
                                                    WhaleAddress.checked_ms > 0)).all()
         for row in cold:
             if all(decimal(p["qty"]) == 0 for p in row.positions.values()):
+                db.execute(delete(WhaleMarketAddress).where(WhaleMarketAddress.address == row.address))
                 db.delete(row)
         db.commit()
 

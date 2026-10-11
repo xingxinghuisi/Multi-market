@@ -1,7 +1,7 @@
-import {escapeHTML as e, number as n, percent, timestamp, safeURL, kind, marketMatches, candleSeries, alertPayload, supportsSubscriptions} from "./mobile-core.js?v=2026.10.11.4";
-import {whalePage,matchingWhaleMarkets} from "./whales.js?v=2026.10.11.4";
-import {createAppUpdater} from "./app-update.js?v=2026.10.11.4";
-const APP_VERSION = "2026.10.11.4";
+import {escapeHTML as e, number as n, percent, timestamp, safeURL, kind, marketMatches, candleSeries, alertPayload, supportsSubscriptions} from "./mobile-core.js?v=2026.10.11.5";
+import {whalePage,matchingWhaleMarkets} from "./whales.js?v=2026.10.11.5";
+import {createAppUpdater} from "./app-update.js?v=2026.10.11.5";
+const APP_VERSION = "2026.10.11.5";
 
 const $ = selector => document.querySelector(selector);
 const content = $("#content");
@@ -532,7 +532,7 @@ content.addEventListener("submit",async event=>{
   event.preventDefault();const form=event.target, values=Object.fromEntries(new FormData(form));
   const button=form.querySelector('[type="submit"]');if(button.disabled)return;
   if(form.classList.contains("whale-subscription-form")){
-    await mutate(button,async()=>{await request("/api/whales/subscriptions",{method:"PUT",body:{coin:values.coin,enabled:values.enabled==="on",min_position_usd:Number(values.min_position_usd),cooldown_seconds:Number(values.cooldown_seconds)}});toast("巨鲸订阅已保存；服务会自动发现地址。");},["whales"]);return;
+    await mutate(button,async()=>{await request("/api/whales/subscriptions",{method:"PUT",body:{coin:values.coin,enabled:values.enabled==="on",min_position_usd:Number(values.min_position_usd),cooldown_seconds:Number(values.cooldown_seconds),min_change_usd:Number(values.min_change_usd),min_change_pct:Number(values.min_change_pct),aggregation_seconds:Number(values.aggregation_seconds),priority_events:values.priority_events==="on"}});toast("巨鲸订阅已保存；服务会自动发现地址。");},["whales"]);return;
   }
   if(form.id==="login-form"||form.id==="register-form") {
     button.disabled=true;

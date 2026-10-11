@@ -41,3 +41,21 @@ test("known wallets are escaped and existing subscriptions cannot be accidentall
   assert.ok(html.includes("首次核验，无法确认实际开仓时间"));
   assert.ok(html.includes("10x"));
 });
+
+test("personal filter controls and market-specific reasons distinguish events from pushes",()=>{
+  const html=whalePage({subscriptions:[{id:1,coin:"xyz:KORU",min_change_usd:7500,
+    min_change_pct:.75,aggregation_seconds:180,priority_events:false}],
+    monitoring:[{coin:"xyz:KORU",known_addresses:7,verified_addresses:5,pending_addresses:2,
+      eligible_positions:1,stale_positions:0,outcomes_24h:{below_change:12,buffering:2,sent:1}}],
+    events:[{coin:"xyz:KORU",kind:"reduced",side:"short",qty:"-100000",previous_qty:"-100080.1",
+      address:"test",push_outcome:"below_change"}]},true);
+  assert.match(html,/name="min_change_usd"[^>]*value="7500"/);
+  assert.match(html,/name="min_change_pct"[^>]*value="0.75"/);
+  assert.match(html,/name="aggregation_seconds"[^>]*value="180"/);
+  assert.match(html,/name="priority_events" type="checkbox">/);
+  assert.ok(html.includes("须同时达到金额和比例门槛"));
+  assert.ok(html.includes("调仓门槛未达标 12"));
+  assert.ok(html.includes("累计等待中 2"));
+  assert.ok(html.includes("已发送 Telegram 1"));
+  assert.ok(html.includes("不是全网历史总数"));
+});

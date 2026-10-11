@@ -57,7 +57,41 @@ class WhaleRuntime(Base):
     data: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
+class WhalePushPolicy(Base):
+    __tablename__ = "whale_push_policies"
+    subscription_id: Mapped[int] = mapped_column(ForeignKey("whale_position_subscriptions.id"), primary_key=True)
+    data: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_ms: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class WhaleAdjustmentBatch(Base):
+    __tablename__ = "whale_adjustment_batches"
+    subscription_id: Mapped[int] = mapped_column(ForeignKey("whale_position_subscriptions.id"), primary_key=True)
+    address: Mapped[str] = mapped_column(String(42), primary_key=True)
+    expires_ms: Mapped[int] = mapped_column(Integer, index=True)
+    data: Mapped[dict] = mapped_column(JSON)
+
+
+class WhaleEventDecision(Base):
+    __tablename__ = "whale_event_decisions"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    event_key: Mapped[str] = mapped_column(ForeignKey("whale_position_events.event_key"), primary_key=True)
+    coin: Mapped[str] = mapped_column(String(68), index=True)
+    outcome: Mapped[str] = mapped_column(String(30), index=True)
+    observed_ms: Mapped[int] = mapped_column(Integer, index=True)
+
+
+class WhaleMarketAddress(Base):
+    __tablename__ = "whale_market_addresses"
+    coin: Mapped[str] = mapped_column(String(68), primary_key=True)
+    address: Mapped[str] = mapped_column(ForeignKey("whale_addresses.address"), primary_key=True)
+    first_seen_ms: Mapped[int] = mapped_column(Integer)
+    last_trade_ms: Mapped[int] = mapped_column(Integer)
+
+
 def initialize_whale_tables(engine):
     # Existing users, assets, rules and data are never rewritten.
     Base.metadata.create_all(engine, tables=[WhaleSubscription.__table__, WhaleAddress.__table__,
-        WhalePositionEvent.__table__, WhalePositionDelivery.__table__, WhaleRuntime.__table__], checkfirst=True)
+        WhalePositionEvent.__table__, WhalePositionDelivery.__table__, WhaleRuntime.__table__,
+        WhalePushPolicy.__table__, WhaleAdjustmentBatch.__table__, WhaleEventDecision.__table__,
+        WhaleMarketAddress.__table__], checkfirst=True)
