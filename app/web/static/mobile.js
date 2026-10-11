@@ -1,8 +1,8 @@
-import {escapeHTML as e, number as n, percent, timestamp, safeURL, kind, marketMatches, candleSeries, alertPayload, supportsSubscriptions} from "./mobile-core.js?v=2026.10.12.1";
-import {whalePage,matchingWhaleMarkets,whaleMarketLabel} from "./whales.js?v=2026.10.12.1";
-import {createAppUpdater} from "./app-update.js?v=2026.10.12.1";
-import {signalsPage,technicalPayload} from "./signals.js?v=2026.10.12.1";
-const APP_VERSION = "2026.10.12.1";
+import {escapeHTML as e, number as n, percent, timestamp, safeURL, kind, marketMatches, candleSeries, alertPayload, supportsSubscriptions, apiErrorDetail} from "./mobile-core.js?v=2026.10.12.2";
+import {whalePage,matchingWhaleMarkets,whaleMarketLabel} from "./whales.js?v=2026.10.12.2";
+import {createAppUpdater} from "./app-update.js?v=2026.10.12.2";
+import {signalsPage,technicalPayload,syncTechnicalForm} from "./signals.js?v=2026.10.12.2";
+const APP_VERSION = "2026.10.12.2";
 
 const $ = selector => document.querySelector(selector);
 const content = $("#content");
@@ -83,7 +83,7 @@ async function request(url, {method="GET", body, signal}={}) {
       headers,body:body?JSON.stringify(body):undefined});
     const data=await response.json().catch(()=>null);
     if(!response.ok) {
-      const detail=typeof data?.detail === "string"?data.detail: "请稍后重试";
+      const detail=apiErrorDetail(data);
       const error = new Error(`请求失败（${response.status}）：${detail}`);
       error.status = response.status;
       if(response.status===401&&state.session&&url!=="/api/auth/login") {
@@ -383,11 +383,11 @@ async function refresh() {
 }
 let refreshTimer;
 function scheduleRefresh() {clearInterval(refreshTimer);refreshTimer=setInterval(refresh,state.refreshSeconds*1000);}
-async function mutate(button,operation,keys) {
+async function mutate(button,operation,keys,onError) {
   if(button.disabled)return;
   button.disabled=true;
   try {await operation();await load(keys);render();}
-  catch(error){toast(error.message);}
+  catch(error){onError?.(error);toast(error.message);}
   finally {button.disabled=false;}
 }
 content.addEventListener("click",async event=>{
@@ -481,6 +481,10 @@ content.addEventListener("click",async event=>{
   }
 });
 content.addEventListener("change",async event=>{
+  const technicalForm=event.target.closest("[data-technical-form]");
+  if(technicalForm&&event.target.matches('[name="indicators"][value="fibonacci"]')){
+    syncTechnicalForm(technicalForm);return;
+  }
   if(event.target.matches("[data-whale-platform]")){
     updateWhaleMarkets(event.target.form);
     return;
@@ -537,6 +541,14 @@ content.addEventListener("input",event=>{
     if(list)list.innerHTML=poolRows(subPool());
   }
 });
+content.addEventListener("invalid",event=>{
+  const settings=event.target.closest("[data-fibonacci-settings]");
+  if(!settings)return;
+  settings.open=true;
+  const form=settings.closest("[data-technical-form]");
+  const label={fib_low:"低点价格",fib_high:"高点价格",fib_tolerance_pct:"接近价位的容差"}[event.target.name];
+  form.querySelector(".form-error").textContent=`已选择斐波那契回撤，请填写有效的${label}。`;
+},true);
 content.addEventListener("submit",async event=>{
   event.preventDefault();const form=event.target, values=Object.fromEntries(new FormData(form));
   const button=form.querySelector('[type="submit"]');if(button.disabled)return;
@@ -544,8 +556,10 @@ content.addEventListener("submit",async event=>{
     await mutate(button,async()=>{await request("/api/whales/subscriptions",{method:"PUT",body:{coin:values.coin,enabled:values.enabled==="on",min_position_usd:Number(values.min_position_usd),cooldown_seconds:Number(values.cooldown_seconds),min_change_usd:Number(values.min_change_usd),min_change_pct:Number(values.min_change_pct),aggregation_seconds:Number(values.aggregation_seconds),priority_events:values.priority_events==="on"}});toast("巨鲸订阅已保存；服务会自动发现地址。");},["whales"]);return;
   }
   if(form.matches("[data-technical-form]")){
-    try{const payload=technicalPayload(new FormData(form));await mutate(button,async()=>{await request("/api/subscriptions",{method:"PUT",body:payload});toast("技术信号设置已保存，从下一个完整周期开始检测。");},["subs","signals"]);}
-    catch(error){form.querySelector(".form-error").textContent=error.message;}return;
+    const showError=error=>{form.querySelector(".form-error").textContent=error.message;form.elements.namedItem(error.field)?.focus();};
+    form.querySelector(".form-error").textContent="";
+    try{const payload=technicalPayload(new FormData(form));await mutate(button,async()=>{await request("/api/subscriptions",{method:"PUT",body:payload});toast("技术信号设置已保存，从下一个完整周期开始检测。");},["subs","signals"],showError);}
+    catch(error){showError(error);}return;
   }
   if(form.id==="login-form"||form.id==="register-form") {
     button.disabled=true;

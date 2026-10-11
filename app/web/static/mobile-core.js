@@ -1,4 +1,13 @@
 export const escapeHTML = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+export function apiErrorDetail(data) {
+  if (typeof data?.detail === "string") return data.detail;
+  if (Array.isArray(data?.detail)) {
+    const messages = data.detail.map(error => typeof error?.msg === "string"
+      ? error.msg.replace(/^Value error,\s*/, "").slice(0, 240) : "").filter(Boolean);
+    if (messages.length) return [...new Set(messages)].slice(0, 3).join("；");
+  }
+  return "请稍后重试";
+}
 export function number(value, digits = 2) {
   if (value === null || value === undefined || value === "" || !Number.isFinite(Number(value))) return "—";
   return Number(value).toLocaleString("zh-CN", {maximumFractionDigits: digits});

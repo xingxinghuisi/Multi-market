@@ -1,4 +1,4 @@
-import {escapeHTML as e, number as n} from "./mobile-core.js?v=2026.10.12.1";
+import {escapeHTML as e, number as n} from "./mobile-core.js?v=2026.10.12.2";
 
 const labels={discovered:"新发现已有仓位",opened:"新开仓",increased:"加仓",reduced:"减仓",closed:"平仓",flipped:"反向开仓"};
 const stamp=value=>value?new Date(value).toLocaleString("zh-CN"):"尚未收到";

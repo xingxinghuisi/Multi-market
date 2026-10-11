@@ -1,4 +1,4 @@
-import {escapeHTML as e,number as n,supportsSubscriptions,timestamp} from "./mobile-core.js?v=2026.10.12.1";
+import {escapeHTML as e,number as n,supportsSubscriptions,timestamp} from "./mobile-core.js?v=2026.10.12.2";
 
 const names={rsi:"RSI 14",macd:"MACD 12/26/9",ma:"MA / EMA 金叉与死叉",kdj:"KDJ 9/3/3",volume:"成交额异动",fibonacci:"斐波那契回撤",divergence:"RSI 顶 / 底背离"};
 const defaults={timeframe:"1h",indicators:["rsi","macd","ma","kdj","volume"],rsi_low:30,rsi_high:70,ma_type:"EMA",ma_fast:9,ma_slow:21,volume_multiple:2,fib_low:null,fib_high:null,fib_trend:"up",fib_tolerance_pct:0.3,cooldown_seconds:3600,ai_enabled:true};
@@ -13,8 +13,9 @@ export function budgetCard(data){
 
 function form(assets,sub){
   const c={...defaults,...sub?.config};
-  const field=(name,label,min,max,step="1")=>`<label>${label}<input name="${name}" type="number" inputmode="decimal" min="${min}" max="${max}" step="${step}" value="${e(c[name]??"")}"${name.startsWith("fib_")&&name!=="fib_tolerance_pct"?"":" required"}></label>`;
-  return `<form data-technical-form class="technical-form">${sub?`<input type="hidden" name="asset_id" value="${sub.asset.id}">`:`<label>Binance USDT 合约<select name="asset_id" required><option value="">选择合约</option>${assets.map(a=>`<option value="${a.id}">${e(a.symbol)} · ${e(a.name)}</option>`).join("")}</select></label>`}<div class="grid-two"><label>K 线周期<select name="timeframe">${options([["15m","15 分钟"],["1h","1 小时"],["4h","4 小时"],["1d","日线"]],c.timeframe)}</select></label>${field("cooldown_seconds","提醒间隔（秒）",0,86400)}</div><fieldset><legend>触发指标</legend><div class="signal-checks">${Object.entries(names).map(([key,label])=>`<label><input type="checkbox" name="indicators" value="${key}"${c.indicators.includes(key)?" checked":""}> ${label}</label>`).join("")}</div></fieldset><div class="grid-two">${field("rsi_low","RSI 下限",1,99,"any")}${field("rsi_high","RSI 上限",1,99,"any")}<label>均线算法<select name="ma_type">${options([["EMA","EMA 指数均线"],["MA","MA 简单均线"]],c.ma_type)}</select></label>${field("ma_fast","短均线周期",2,99)}${field("ma_slow","长均线周期",3,100)}${field("volume_multiple","成交额 / 前 20 根均值",1.1,100,"any")}</div><details><summary>斐波那契锚点（选中该指标时必填）</summary><div class="grid-two">${field("fib_low","低点价格",0.00000001,1e12,"any")}${field("fib_high","高点价格",0.00000001,1e12,"any")}<label>波段方向<select name="fib_trend">${options([["up","上涨波段回撤"],["down","下跌波段反弹"]],c.fib_trend)}</select></label>${field("fib_tolerance_pct","接近价位的容差（%）",0.01,5,"any")}</div></details><div class="signal-checks"><label><input type="checkbox" name="enabled"${!sub||sub.enabled?" checked":""}> 开启监控</label><label><input type="checkbox" name="ai_enabled"${c.ai_enabled?" checked":""}> 触发后由 Gemini 解读</label></div><p class="form-error down" role="alert"></p><button type="submit" class="primary full">${sub?"保存信号设置":"添加技术信号订阅"}</button></form>`;
+  const fibonacci=c.indicators.includes("fibonacci");
+  const field=(name,label,min,max,step="1")=>`<label>${label}<input name="${name}" type="number" inputmode="decimal" min="${min}" max="${max}" step="${step}" value="${e(c[name]??"")}"${name.startsWith("fib_")&&!fibonacci?" disabled":" required"}></label>`;
+  return `<form data-technical-form class="technical-form">${sub?`<input type="hidden" name="asset_id" value="${sub.asset.id}">`:`<label>Binance USDT 合约<select name="asset_id" required><option value="">选择合约</option>${assets.map(a=>`<option value="${a.id}">${e(a.symbol)} · ${e(a.name)}</option>`).join("")}</select></label>`}<div class="grid-two"><label>K 线周期<select name="timeframe">${options([["15m","15 分钟"],["1h","1 小时"],["4h","4 小时"],["1d","日线"]],c.timeframe)}</select></label>${field("cooldown_seconds","提醒间隔（秒）",0,86400)}</div><fieldset><legend>触发指标</legend><div class="signal-checks">${Object.entries(names).map(([key,label])=>`<label><input type="checkbox" name="indicators" value="${key}"${c.indicators.includes(key)?" checked":""}> ${label}</label>`).join("")}</div></fieldset><div class="grid-two">${field("rsi_low","RSI 下限",1,99,"any")}${field("rsi_high","RSI 上限",1,99,"any")}<label>均线算法<select name="ma_type">${options([["EMA","EMA 指数均线"],["MA","MA 简单均线"]],c.ma_type)}</select></label>${field("ma_fast","短均线周期",2,99)}${field("ma_slow","长均线周期",3,100)}${field("volume_multiple","成交额 / 前 20 根均值",1.1,100,"any")}</div><details data-fibonacci-settings${fibonacci?" open":" hidden"}><summary>斐波那契锚点（必填）</summary><p class="muted">请选择一个波段，填写它的真实低点和高点价格，用于计算回撤位；低点须小于高点。</p><div class="grid-two">${field("fib_low","低点价格",0.00000001,1e12,"any")}${field("fib_high","高点价格",0.00000001,1e12,"any")}<label>波段方向<select name="fib_trend">${options([["up","上涨波段回撤"],["down","下跌波段反弹"]],c.fib_trend)}</select></label>${field("fib_tolerance_pct","接近价位的容差（%）",0.01,5,"any")}</div></details><div class="signal-checks"><label><input type="checkbox" name="enabled"${!sub||sub.enabled?" checked":""}> 开启监控</label><label><input type="checkbox" name="ai_enabled"${c.ai_enabled?" checked":""}> 触发后由 Gemini 解读</label></div><p class="form-error down" role="alert"></p><button type="submit" class="primary full">${sub?"保存信号设置":"添加技术信号订阅"}</button></form>`;
 }
 
 export function technicalPayload(formData){
@@ -24,7 +25,29 @@ export function technicalPayload(formData){
   for(const key of ["fib_low","fib_high"])config[key]=formData.get(key)?Number(formData.get(key)):null;
   config.indicators=formData.getAll("indicators");config.ai_enabled=formData.has("ai_enabled");
   if(!config.indicators.length)throw new Error("请至少选择一个触发指标。");
-  return {asset_id:Number(formData.get("asset_id")),alert_type:"technical_signal",enabled:formData.has("enabled"),config};
+  const fail=(message,field)=>{throw Object.assign(new Error(message),{field});};
+  const assetId=Number(formData.get("asset_id"));
+  if(!Number.isInteger(assetId)||assetId<=0)fail("请选择 Binance USDT 合约。","asset_id");
+  if(config.rsi_low>=config.rsi_high)fail("RSI 下限须小于上限。","rsi_low");
+  if(config.ma_fast>=config.ma_slow)fail("均线短周期须小于长周期。","ma_fast");
+  if(config.indicators.includes("fibonacci")){
+    for(const [key,label] of [["fib_low","低点"],["fib_high","高点"]]){
+      if(!Number.isFinite(config[key])||config[key]<=0||config[key]>1e12)fail(`已选择斐波那契回撤，请填写有效的${label}价格。`,key);
+    }
+    if(config.fib_low>=config.fib_high)fail("斐波那契低点价格须小于高点价格。","fib_low");
+  }else{config.fib_low=null;config.fib_high=null;config.fib_tolerance_pct=defaults.fib_tolerance_pct;config.fib_trend=defaults.fib_trend;}
+  return {asset_id:assetId,alert_type:"technical_signal",enabled:formData.has("enabled"),config};
+}
+
+export function syncTechnicalForm(form){
+  const enabled=form.querySelector('[name="indicators"][value="fibonacci"]').checked;
+  const settings=form.querySelector("[data-fibonacci-settings]");
+  settings.hidden=!enabled;settings.open=enabled;
+  for(const input of settings.querySelectorAll("input,select")){
+    if(input.tagName==="INPUT")input.required=enabled;
+    input.disabled=!enabled;
+  }
+  form.querySelector(".form-error").textContent="";
 }
 
 export function signalsPage(state){
