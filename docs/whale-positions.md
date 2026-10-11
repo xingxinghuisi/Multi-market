@@ -14,7 +14,11 @@ PWA「提醒 → 链上巨鲸仓位」独立于原有 Binance 聚合成交提醒
 
 Telegram 与仓位页面显示官方快照 `unrealizedPnl` 的**当前未实现盈亏**，正负号区分浮盈和浮亏，真实零值显示 `$0.00`。字段缺失或无效、尚未重新核验的旧记录显示“未提供”，不自行估算。盈亏变化本身不触发开仓／加减仓事件；当前仓位页面随正常核验更新，历史事件中的盈亏保留事件核验时的快照。已平仓事件不把浮盈亏或零持仓冒充已实现收益；已实现净利润需要另外获取成交和结算记录。本次仅扩展 JSON 快照字段，无数据库迁移，不补发历史 Telegram 消息。
 
-通知统一保存在账户通知中心，发给该用户已验证绑定的 Telegram；只有旧 `default` 账户可沿用部署接收目标。新推送通常为六行：首行显示品种与动作，加减仓同时显示数量净变化；随后显示仓位价值（万／亿美元）、均价及杠杆、浮动盈亏、短地址、`trade.xyz` 与北京时间。加减仓的金额明确为“剩余仓位”；首次核验标为“新发现已有多／空单”；平仓显示上次仓位及“已实现盈亏：未提供”，不冒充平仓收益。完整地址、源名称和前后快照继续保存在事件数据；网页保留完整地址和仓位变化详情。旧 Telegram 和已生成的通知不改写。
+通知统一保存在账户通知中心，发给该用户已验证绑定的 Telegram；只有旧 `default` 账户可沿用部署接收目标。新推送通常为七行：首行显示品种与动作，加减仓同时显示数量净变化；随后显示本次动作价格、仓位价值（万／亿美元）、均价及杠杆、浮动盈亏、短地址、`trade.xyz` 与北京时间。加减仓的金额明确为“剩余仓位”；首次核验标为“新发现已有多／空单”；平仓显示上次仓位及“已实现盈亏：未提供”，不冒充平仓收益。完整地址、源名称和前后快照继续保存在事件数据；网页保留完整地址和仓位变化详情。旧 Telegram 和已生成的通知不改写。
+
+动作价格来自官方 `userFillsByTime`，分别显示“开仓价格”“加仓价格”“减仓价格”“平仓价格”，反向开仓分别显示旧仓平仓价与新仓开仓价。只在两次仓位核验间隔不超过一小时、对应市场成交能按 `startPosition` 完整连接前后签名数量、且期间没有混合买卖时提供价格。多笔成交按数量加权，标注“成交均价”；跨越零仓位的成交按关闭旧仓和开启新仓的数量拆分。同毫秒成交按仓位链排序，不依赖成交 ID 的大小。首次发现、旧记录、成交缺失／异常、响应达到 2000 条上限、数量不一致或期间先买后卖等情况显示“未提供”，不会拿持仓均价、标记价或最新市场价代替。平仓价不等于已实现收益。
+
+只有达到仓位阈值并产生变化的地址才增加一次成交查询，同一地址多个变动市场共享这次响应；首次发现与价格／盈亏变化不请求成交记录。价格查询失败仍保存有效仓位和事件、照常发送价格未提供的提醒；遇到 429 或服务器错误遵守退避，不无限追查历史或补发旧通知。新增价格及核验依据仅扩展事件 JSON，无数据库迁移。重建应用镜像后仅需更新 `whale_position_worker`，无需重建 API 或刷新 PWA；网页原有仓位均价字段保持原含义。
 
 每用户每事件持久去重；同地址同市场冷却，不会让另一地址的事件被误抑制。显式发送失败最多重试两次；投递前重新检查订阅。进程意外停止后已标为 pending 的投递不自动重发，避免重复；Telegram 请求超时本身存在「已接收但未返回」的不确定性。本次文案精简不改变阈值、触发条件或冷却策略；重建应用镜像后仅需更新 `whale_position_worker`。
 
@@ -23,7 +27,7 @@ Telegram 与仓位页面显示官方快照 `unrealizedPnl` 的**当前未实现�
 - **不是全网全历史索引**，不提供 Binance 等中心化交易所用户仓位。未接入其他链上交易场所，也未购买历史数据。
 - 从监听成交及持久候选池发现地址；启动前已有但此后不成交的静默钱包可能遗漏。第一次订阅也会收到公开成交源的最近成交快照，从中发现地址，但不把旧成交当作刚开仓。
 - 大仓位目标每 60 秒核验，普通候选目标每 5 分钟；观察到新成交可提前排队，但同地址不快于 30 秒。两次核验间开仓又平仓的短暂持仓可能完全遗漏。
-- 最多约两次顺序仓位查询／秒（单次权重 2）；每小时一次市场目录查询。排队、网络故障、限流会延迟，不能保证每个地址都按目标频率更新。使用同一出口 IP 的其他程序也消耗上游额度。
+- REST 请求顺序执行，间隔不少于 0.6 秒，并按约 900 权重／分钟的目标节流：仓位查询权重 2，目录／成交查询权重 20，成交响应另按每 20 条增加权重。每小时刷新一次目录。排队、网络故障、限流会延迟，不能保证每个地址都按目标频率更新；使用同一出口 IP 的其他程序也消耗上游额度。
 - 默认候选池容量 2000，可通过 `WHALE_POSITION_ADDRESS_CAP` 设置为 100–10000。达到容量会记录跳过次数，页面提示覆盖不完整；仅清理超过一天未成交且已核验空仓的候选，不静默淘汰已知持仓。计数表示新候选被跳过的次数，并非唯一遗漏地址数。
 - 页面显示服务心跳、成交连接、实际订阅市场、最近成交、核验时间、排队数及异常。超过三分钟未更新的仓位标为过期。网络异常、缺失字段、重复／过期源快照不会生成虚假平仓。
 - 公共事件保留七天；账户通知继续沿用原有通知保存策略。页面每次最多显示 50 个大仓位及 50 条事件。阈值调整不补发历史事件。已提交但未派发的事件可在一小时内恢复派发，超时不再推送旧消息。
@@ -73,6 +77,10 @@ Persistent candidate wallets are verified through public clearinghouse snapshots
 Position cards and Telegram messages display the source snapshot's `unrealizedPnl` as current unrealized P&L, preserving profit, loss and zero. Missing or invalid fields and older records remain unavailable until verified again. P&L-only changes do not generate position-change alerts. Event P&L is historical to that event snapshot, while current holdings update through normal polling. Closure events do not infer realized profit from unrealized P&L or zero position value. Existing JSON snapshots remain compatible without a database migration or historical Telegram replay.
 
 New Telegram messages use concise copy: instrument and action (including net quantity for increases/reductions), remaining position value, entry/leverage, unrealized P&L, shortened wallet address, and trade.xyz with Beijing time. Initial discoveries remain explicitly pre-existing holdings; closure messages retain the previous notional and mark realized P&L unavailable. Full source and snapshot details remain in stored events and the web view. Trigger thresholds and cooldowns are unchanged; existing notifications are not rewritten. Rebuild the image and update only the whale position worker for this copy change.
+
+Messages now also include action-specific opening, increase, reduction or closing prices from official `userFillsByTime` records. Fills must connect both signed position snapshots exactly through their start positions, within a window of at most one hour, without mixed buy/sell directions. Multiple fills use size-weighted prices and are labeled as an execution average. Reversals split closing and opening quantities/prices at zero; same-millisecond ordering uses position continuity rather than trade IDs. Discoveries, legacy events, incomplete/invalid fills, responses reaching the 2000-fill limit and unreconciled quantities remain unavailable. Entry, mark and latest market prices are never substituted. Closing price does not imply realized profit.
+
+One optional fill lookup is shared by all qualifying changed markets in a wallet scan. Failed lookups preserve valid snapshots and alerts, with unavailable execution prices; HTTP rate limits/server errors trigger backoff. REST pacing now accounts for fill-response weights, targeting about 900 weight/minute with at least 0.6 seconds between requests. The event JSON extension needs no database migration. Rebuild and recreate only `whale_position_worker` for this backend addition; the API and PWA do not require an update. Existing Telegram messages are not replayed.
 
 Coverage begins with observed public trades and the persisted candidate pool; this is not a complete historical or cross-exchange index. Quiet pre-existing wallets, short-lived positions between polls, pool overflow, reconnection gaps and throttling may cause omissions. The UI exposes source scope, heartbeat, subscription acknowledgments, timestamps, queue depth, errors and stale positions. Run one worker replica with the existing SQLite volume. Upgrade the API and new worker after backing up production data; pulling source does not rebuild running containers.
 

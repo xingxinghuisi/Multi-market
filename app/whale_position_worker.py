@@ -20,6 +20,7 @@ from hyperliquid_whales import PublicAPIError, PublicClient, WS_URL, address_val
 from whale_models import (WhaleAddress, WhalePositionDelivery, WhalePositionEvent, WhaleRuntime,
                           WhaleSubscription, initialize_whale_tables)
 from whale_position_service import deliver_pending
+from whale_execution import execution_details, fill_window
 
 load_dotenv()
 
@@ -84,20 +85,37 @@ def scan_one(client, floors):
                 raise ValueError("Stale snapshot")
             previous = row.positions or {}
             active = False
+            events = []
             for coin, current in positions.items():
                 active = active or decimal(current["notional_usd"]) >= floors[coin]
                 payload = position_event(row.address, coin, previous.get(coin), current, stamp)
                 if payload and decimal(payload["qualifying_usd"]) >= floors[coin]:
-                    if db.get(WhalePositionEvent, payload["event_key"]) is None:
-                        db.add(WhalePositionEvent(event_key=payload["event_key"], address=row.address,
-                            coin=coin, kind=payload["kind"], qualifying_usd=float(payload["qualifying_usd"]),
-                            observed_ms=now, payload=payload))
+                    events.append(payload)
+            # One optional fill request per wallet scan, shared by all changed
+            # qualifying markets. A failure must not discard a verified position.
+            windows = [window for payload in events if (window := fill_window(payload))]
+            fills, fill_error, retry_ms = None, None, 0
+            if windows:
+                try:
+                    fills = client.fills(address, min(w[0] for w in windows), stamp)
+                except Exception as error:
+                    fill_error = type(error).__name__
+                    if isinstance(error, PublicAPIError) and (error.status == 429 or error.status >= 500):
+                        retry_ms = milliseconds() + error.retry_seconds * 1000
+                    log(f"Execution price unavailable: {fill_error}")
+            for payload in events:
+                payload["execution"] = execution_details(payload, fills)
+                if db.get(WhalePositionEvent, payload["event_key"]) is None:
+                    db.add(WhalePositionEvent(event_key=payload["event_key"], address=row.address,
+                        coin=payload["coin"], kind=payload["kind"], qualifying_usd=float(payload["qualifying_usd"]),
+                        observed_ms=now, payload=payload))
             row.positions = {**previous, **positions}
             row.snapshot_ms = stamp
             row.checked_ms = now
             row.next_check_ms = now + (60000 if active else 300000)
             db.commit()
-            return {"last_scan_ms": now, "last_scan_error": None}
+            return {"last_scan_ms": now, "last_scan_error": None,
+                    "last_fill_error": fill_error, "scan_retry_ms": retry_ms}
         except Exception as error:
             # Network failure cannot overwrite the last good position or produce a close.
             db.rollback()
@@ -259,7 +277,7 @@ class Worker:
                     result = await asyncio.to_thread(scan_one, self.client, floors.copy())
                     if result:
                         self.runtime.update(result)
-                # At most two sequential position requests/sec (weight 2 each).
+                # PublicClient also budgets catalog and fill lookups by REST weight.
                 await asyncio.sleep(.6)
         finally:
             for task in tasks:

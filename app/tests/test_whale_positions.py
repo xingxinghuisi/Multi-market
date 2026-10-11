@@ -56,7 +56,8 @@ def test_first_snapshot_is_discovery_and_price_only_change_is_not_increase():
     assert position_event(A, COIN, position(), position(value="3000000"), milliseconds()) is None
     title, text = event_text(initial)
     assert title == "🐋 KORU 新发现已有多单"
-    assert text.splitlines()[0] == title and len(text.splitlines()) == 6
+    assert text.splitlines()[0] == title and len(text.splitlines()) == 7
+    assert "开仓价格：未提供" in text
     assert "开仓均价：$19.5｜10x 逐仓" in text and "MIRAO" not in text
     assert "trade.xyz" in text and "北京时间" in text
     assert A not in text and f"地址：{A[:8]}…{A[-6:]}" in text

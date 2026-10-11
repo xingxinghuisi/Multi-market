@@ -4,6 +4,7 @@ from decimal import Decimal, InvalidOperation
 import hashlib
 import os
 import re
+import time
 
 import requests
 
@@ -51,15 +52,26 @@ class PublicClient:
     def __init__(self):
         self.session = requests.Session()
         self.proxies = {"https": os.environ["HYPERLIQUID_PROXY"]} if os.getenv("HYPERLIQUID_PROXY") else None
+        self.next_request_at = 0
 
     def info(self, payload):
+        # Sequential worker client: reserve weight for every REST request, including
+        # fill lookups. Target <=900 weight/min, below the shared 1200/IP limit.
+        time.sleep(max(0, self.next_request_at - time.monotonic()))
+        started = time.monotonic()
+        weight = 2 if payload["type"] == "clearinghouseState" else 20
+        self.next_request_at = started + max(.6, weight / 15)
         response = self.session.post(INFO_URL, json=payload, timeout=(5, 12), proxies=self.proxies)
         if response.status_code != 200:
             # Do not include credentials, proxy URLs or full request details in logs.
             retry = response.headers.get("Retry-After", "60")
             retry = min(300, max(10, int(retry))) if retry.isdigit() else 60
             raise PublicAPIError(response.status_code, retry)
-        return response.json()
+        raw = response.json()
+        if payload["type"] == "userFillsByTime" and isinstance(raw, list):
+            weight += (len(raw) + 19) // 20
+            self.next_request_at = started + max(.6, weight / 15)
+        return raw
 
     def markets(self):
         raw = self.info({"type": "meta", "dex": DEX})
@@ -78,6 +90,11 @@ class PublicClient:
 
     def positions(self, address):
         return self.info({"type": "clearinghouseState", "user": address, "dex": DEX})
+
+    def fills(self, address, start_ms, end_ms):
+        # This endpoint includes HIP-3 fills with their full xyz: coin names.
+        return self.info({"type": "userFillsByTime", "user": address,
+                          "startTime": start_ms, "endTime": end_ms, "aggregateByTime": False})
 
 
 def parse_positions(raw, coins):
@@ -180,6 +197,21 @@ def _compact_money(value):
     return f"${amount:,.2f}"
 
 
+def _execution_lines(event):
+    execution = event.get("execution") or {}
+    verified = execution.get("status") == "verified"
+    def price(field):
+        value = execution.get(field) if verified else None
+        return "未提供" if value is None else f"${_plain_number(format(decimal(value), '.10g'))}"
+    if event["kind"] == "flipped":
+        return [f"{label}：{price(field)}{'（成交均价）' if verified and execution.get(count, 0) > 1 else ''}"
+                for label, field, count in (("平仓价格", "close_price", "close_fill_count"),
+                                            ("开仓价格", "open_price", "open_fill_count"))]
+    label = {"increased": "加仓价格", "reduced": "减仓价格", "closed": "平仓价格"}.get(event["kind"], "开仓价格")
+    suffix = "（成交均价）" if verified and execution.get("fill_count", 0) > 1 else ""
+    return [f"{label}：{price('price')}{suffix}"]
+
+
 def event_text(event):
     """Concise notification copy; full source and snapshot details stay in the event."""
     side = "多单" if event["side"] == "long" else "空单"
@@ -196,7 +228,7 @@ def event_text(event):
     else:
         action = f"{side}{KINDS[kind]}"
     title = f"🐋 {event['coin'].removeprefix('xyz:')} {action}"
-    lines = [title]
+    lines = [title, *_execution_lines(event)]
     if kind == "closed":
         lines += [f"上次仓位：{_compact_money(event['previous_notional_usd'])}", "已实现盈亏：未提供"]
     else:
