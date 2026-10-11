@@ -176,6 +176,8 @@ app.mount(
 from mobile_api import install_mobile_routes
 from whale_models import initialize_whale_tables
 from whale_position_api import install_whale_routes
+from signal_models import initialize_signal_tables
+from signal_api import install_signal_routes
 from subscription_service import initialize_subscription_tables, supports_subscription, subscription_config
 
 
@@ -188,6 +190,7 @@ async def start_market_broadcaster():
                                                      UserHiddenAsset.__table__, TelegramChallenge.__table__], checkfirst=True)
     initialize_subscription_tables(database_engine)
     initialize_whale_tables(database_engine)
+    initialize_signal_tables(database_engine)
 
     app.state.market_broadcast_task = (
         asyncio.create_task(
@@ -4651,6 +4654,14 @@ def upsert_subscription(
     if not supports_subscription(asset):
         raise HTTPException(status_code=400, detail="推送订阅目前仅支持 Binance USDT 合约")
 
+    if payload.alert_type == "technical_signal":
+        count = len(db.scalars(select(AlertSubscription.id).where(
+            AlertSubscription.user_id == user.id,
+            AlertSubscription.alert_type == "technical_signal",
+            AlertSubscription.asset_id != asset.id)).all())
+        if count >= 10:
+            raise HTTPException(status_code=400, detail="每个账户最多配置 10 个技术信号订阅")
+
     subscription = db.scalar(
         select(
             AlertSubscription
@@ -4723,4 +4734,5 @@ def delete_subscription(
 
 install_mobile_routes(app, get_db, get_default_user, lambda url: _binance_read_json(url))
 install_whale_routes(app, get_db, get_default_user)
+install_signal_routes(app, get_db, get_default_user)
 install_auth(app, get_db)

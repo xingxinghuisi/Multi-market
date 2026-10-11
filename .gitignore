@@ -1,4 +1,7 @@
 # Secrets
+secrets/
+*-adc.json
+*-service-account.json
 .env
 .env.*
 !.env.example

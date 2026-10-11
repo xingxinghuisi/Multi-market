@@ -25,6 +25,8 @@ $env:RADAR_ALLOW_HTTP_LOCAL="1"
 
 ## 部署上下文
 
+新增「提醒 → 技术信号与 Gemini 解读」：Binance 合约已收盘 RSI、MACD、MA/EMA、KDJ、成交额、斐波那契及 RSI 背离信号，按个人订阅发送 Telegram。Gemini 通过 Google Cloud 凭据启用，按月持久化用量估算，达到 $8.50 通知费用负责人；可选对接 Google 实际账单预算通知。配置、价格口径和部署见 [Gemini 信号说明](docs/gemini-signals.md)。
+
 新增 **Lighter 主网**巨鲸数据源，页面可按平台选择官方有效永续市场；同名股票合约与 trade.xyz 分开监控，复用个人过滤、累计和 Telegram 通知。仅减仓／暂停交易／无成交状态明确标出，不包含 Robinhood。数据边界与双平台部署步骤见 [Lighter 接入说明](docs/lighter-whales.md)。
 
 「提醒 → 链上巨鲸仓位」支持 Hyperliquid / trade.xyz 官方 `xyz` 目录中全部未退市永续合约，自动发现钱包并核验真实仓位，无需填写地址。可按账户、市场设置调仓金额与比例门槛、累计窗口及重要动作优先提醒，并查看各市场覆盖与未推送原因。只监听已开启的订阅；目录包含股票、ETF 及其他品种，不限制为原先四个市场。它与 Binance 聚合成交提醒是两种不同功能。覆盖范围、数据口径、升级及测试见 [链上巨鲸说明](docs/whale-positions.md)；下一数据源筛选见 [平台核验记录](docs/whale-venues.md)。

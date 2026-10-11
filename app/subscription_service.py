@@ -26,6 +26,9 @@ def supports_subscription(asset):
 
 
 def subscription_config(subscription):
+    if subscription.alert_type == "technical_signal":
+        from technical_indicators import TechnicalConfig
+        return TechnicalConfig.model_validate(subscription.config or {}).model_dump()
     if subscription.alert_type == "whale_print":
         return WhaleConfig.model_validate(subscription.config or {}).model_dump()
     return {}
@@ -66,14 +69,14 @@ def deliver_subscription_event(db, subscription_id, payload):
         notification = db.get(Notification, prior.notification_id) if prior else None
         if notification is not None and notification.status != "failed":
             return {"status": notification.status, "duplicate": True, "notification_id": notification.id}
-        if sub.alert_type == "whale_print":
+        if sub.alert_type in {"whale_print", "technical_signal"}:
             try:
                 config = subscription_config(sub)
             except ValueError:
                 return {"status": "invalid_config"}
-            if payload.notional_usd is None:
+            if sub.alert_type == "whale_print" and payload.notional_usd is None:
                 raise HTTPException(status_code=422, detail="Whale event requires notional_usd")
-            if payload.notional_usd < config["whale_min_usd"]:
+            if sub.alert_type == "whale_print" and payload.notional_usd < config["whale_min_usd"]:
                 return {"status": "below_threshold"}
             cooldown = config["cooldown_seconds"]
             recent = db.scalar(select(Notification.id).join(

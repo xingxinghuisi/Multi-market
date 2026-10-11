@@ -1,0 +1,13 @@
+# Optional overlay for an external VPS using a Google ADC credential file.
+# The host path is supplied locally; the credential is never copied into the image.
+services:
+  signal_worker:
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/google-adc.json
+    volumes:
+      - type: bind
+        source: ${GEMINI_CREDENTIALS_FILE:?Set GEMINI_CREDENTIALS_FILE to the absolute host credential path}
+        target: /run/secrets/google-adc.json
+        read_only: true
+        bind:
+          create_host_path: false

@@ -1,5 +1,6 @@
 ﻿fastapi==0.141.1
 groq==1.7.0
+google-auth[requests]==2.61.0
 openai==3.19.0
 pydantic==2.13.5
 pykrx==1.2.8

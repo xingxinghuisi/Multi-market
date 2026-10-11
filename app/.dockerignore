@@ -10,6 +10,9 @@ __pycache__
 .pytest_cache
 *.tar.gz
 .env
+secrets/
+*-adc.json
+*-service-account.json
 .env.*
 data/
 logs

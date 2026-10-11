@@ -316,3 +316,6 @@ html[data-theme="dark"] .switch input:checked+.tr{background:#228a52}
 .whale-numbers{display:flex;flex-wrap:wrap;gap:16px;margin:12px 0}.whale-numbers span{font-size:12px;color:var(--muted)}
 .whale-numbers strong{display:block;color:var(--ink);font-size:16px;margin-top:4px}
 .form-card .whale-enabled{display:flex;align-items:center;gap:10px}.form-card .whale-enabled input{width:20px;height:20px;flex:none}
+
+/* Technical signal settings reuse the existing responsive cards. */
+.technical-form{display:grid;gap:16px;margin:20px 0}.technical-form .grid-two{gap:14px}.technical-form fieldset{border:1px solid var(--line,#ccd5d0);border-radius:16px;padding:14px}.signal-checks{display:flex;flex-wrap:wrap;gap:14px}.signal-checks label{display:flex;align-items:center;gap:6px}.signal-checks input[type=checkbox]{width:18px;height:18px;accent-color:var(--accent,#147d60)}.signal-values{font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.signal-message{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.7}

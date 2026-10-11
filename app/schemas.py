@@ -97,6 +97,7 @@ class AlertRuleUpdate(BaseModel):
 SubscriptionType = Literal[
     "longshort_digest",
     "whale_print",
+    "technical_signal",
 ]
 
 
@@ -115,6 +116,9 @@ class SubscriptionUpsert(BaseModel):
         if self.config is not None:
             if self.alert_type == "whale_print":
                 self.config = WhaleConfig.model_validate(self.config).model_dump()
+            elif self.alert_type == "technical_signal":
+                from technical_indicators import TechnicalConfig
+                self.config = TechnicalConfig.model_validate(self.config).model_dump()
             elif self.config:
                 raise ValueError("1H 多空播报不支持自定义配置")
         return self
