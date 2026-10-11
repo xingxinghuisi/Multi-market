@@ -175,6 +175,24 @@ services:
         max-size: "50m"
         max-file: "3"
 
+  lighter_position_worker:
+    image: korea-market-radar-app:latest
+    container_name: korea-radar-lighter-position
+    command: [python, lighter_position_worker.py]
+    env_file:
+      - .env.production
+    volumes:
+      - ./app/data:/app/data
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
   news_worker:
     image: korea-market-radar-app:latest
 

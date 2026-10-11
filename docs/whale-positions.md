@@ -1,5 +1,7 @@
 # 自动发现 trade.xyz 永续巨鲸
 
+现已扩展 Lighter 主网，复用下述个人推送机制。平台隔离、字段语义、限流及接入验收见 [Lighter 说明](lighter-whales.md)；下方升级命令已包含两个采集服务。
+
 ## 已实现的范围
 
 PWA「提醒 → 链上巨鲸仓位」独立于原有 Binance 聚合成交提醒。无需填写钱包地址；用户选择市场、最低仓位名义价值、同地址同市场提醒间隔、调仓门槛和累计窗口，并可暂停、删除。默认仓位阈值为 100 万美元，可从 1000 美元起设置。没有订阅时不监听公开成交、不轮询钱包。
@@ -56,7 +58,7 @@ Telegram 与仓位页面显示官方快照 `unrealizedPnl` 的**当前未实现�
 
 ## 本地与 Docker
 
-在已初始化的 `app/` 环境启动 API 后，运行 `python whale_position_worker.py`。API 和 worker 都只新增五张表，不修改现有用户、资产、提醒或数据库文件路径。默认无需增加环境变量；若服务器不能直连，可配置 `HYPERLIQUID_PROXY=http://...`，勿在 Git 中提交带凭据的代理地址。
+在已初始化的 `app/` 环境启动 API 后，分别运行 `python whale_position_worker.py` 和 `python lighter_position_worker.py`，各一个副本。共享投递仅由前者负责，即使只订阅 Lighter 也需要它。首次启用巨鲸功能时只创建附加表，不改现有数据；此次 Lighter 扩展复用已有 JSON，无表结构迁移。可选代理 `HYPERLIQUID_PROXY` 和 `LIGHTER_PROXY` 分别用于两平台；勿提交带凭据的代理地址。
 
 服务器升级前先备份 `.env.production`。下方命令使用 SQLite 在线备份保存现有数据库，然后拉取源码、构建和更新服务；适用于已有正确 Git checkout 的部署目录：
 
@@ -70,7 +72,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 folder = Path('/app/data/backups')
 folder.mkdir(exist_ok=True)
-target = folder / ('before-whale-policy-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ') + '.db')
+target = folder / ('before-lighter-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ') + '.db')
 with sqlite3.connect('file:/app/data/market_radar.db?mode=ro', uri=True) as source:
     with sqlite3.connect(target) as backup:
         source.backup(backup)
@@ -79,15 +81,15 @@ PY
 git pull --ff-only origin main
 docker build -f Dockerfile.app -t korea-market-radar-app:latest app
 docker run --rm --env-file .env.production korea-market-radar-app:latest python deployment_preflight.py
-docker compose --env-file .env.production stop whale_position_worker
+docker compose --env-file .env.production stop whale_position_worker lighter_position_worker
 docker compose --env-file .env.production up -d --no-deps --force-recreate --wait --wait-timeout 90 api
-docker compose --env-file .env.production up -d --no-deps --force-recreate whale_position_worker
-docker compose --env-file .env.production ps api whale_position_worker
-docker compose --env-file .env.production logs --since=5m --tail=30 whale_position_worker
+docker compose --env-file .env.production up -d --no-deps --force-recreate whale_position_worker lighter_position_worker
+docker compose --env-file .env.production ps api whale_position_worker lighter_position_worker
+docker compose --env-file .env.production logs --since=5m --tail=30 whale_position_worker lighter_position_worker
 )
 ```
 
-这两个服务应使用相同 `./app/data:/app/data` 卷。其他行情、新闻、原 Binance 巨鲸及 OpenD 服务不需要随本次变更重建或重新登录。先等待 API healthy，进入提醒中心开启一个市场，再确认页面连接、核验及事件；Telegram 真实接收需在 VPS 部署后验收。PWA 版本已更新，沿用现有自动更新机制。
+API 与两个巨鲸服务使用相同 `./app/data:/app/data` 卷。其他行情、新闻、原 Binance 巨鲸及 OpenD 服务不需要随本次变更重建或重新登录。先等待 API healthy，进入提醒中心按平台开启市场，再确认连接、核验及事件；Telegram 真实接收需在 VPS 部署后验收。PWA 版本已更新，沿用现有自动更新机制。
 
 `git pull` 只下载已推送代码，本身不会更新运行中的镜像。本文件的代码准备及本地测试不代表已部署到 VPS。
 
@@ -124,7 +126,7 @@ Personal per-market settings now include minimum adjustment USD (default 5,000),
 
 Continuous same-direction adjustments merge durably within each user's wallet/market window and send when qualified and outside cooldown. Expired subthreshold or still-cooled batches are filtered. Opposite changes or important position events supersede old batches; configuration changes, pausing and deletion cancel pending aggregation and obsolete failed retries. Complete member executions yield a size-weighted aggregate price; otherwise it remains unavailable. Initial discovery remains distinct from a new opening. Per-market retained-pool coverage and personal 24-hour decision counts explain why web events can outnumber Telegram messages.
 
-Four additive tables store policies, batches, decisions and market/address associations; startup creates them idempotently without altering legacy subscriptions. Existing clients omitting new fields preserve saved settings. Upgrade both API and worker using the deployment steps above; PWA assets use version `2026.10.11.5`.
+Four additive tables store policies, batches, decisions and market/address associations; startup creates them idempotently without altering legacy subscriptions. Existing clients omitting new fields preserve saved settings. Lighter reuses these tables and JSON snapshots without altering legacy rows. Upgrade API and both workers using the deployment steps above; PWA assets use version `2026.10.11.6`.
 
 Coverage begins with observed public trades and the persisted candidate pool; this is not a complete historical or cross-exchange index. Quiet pre-existing wallets, short-lived positions between polls, pool overflow, reconnection gaps and throttling may cause omissions. The UI exposes source scope, heartbeat, subscription acknowledgments, timestamps, queue depth, errors and stale positions. Run one worker replica with the existing SQLite volume. Upgrade the API and new worker after backing up production data; pulling source does not rebuild running containers.
 

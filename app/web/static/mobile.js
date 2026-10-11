@@ -1,7 +1,7 @@
-import {escapeHTML as e, number as n, percent, timestamp, safeURL, kind, marketMatches, candleSeries, alertPayload, supportsSubscriptions} from "./mobile-core.js?v=2026.10.11.5";
-import {whalePage,matchingWhaleMarkets} from "./whales.js?v=2026.10.11.5";
-import {createAppUpdater} from "./app-update.js?v=2026.10.11.5";
-const APP_VERSION = "2026.10.11.5";
+import {escapeHTML as e, number as n, percent, timestamp, safeURL, kind, marketMatches, candleSeries, alertPayload, supportsSubscriptions} from "./mobile-core.js?v=2026.10.11.6";
+import {whalePage,matchingWhaleMarkets,whaleMarketLabel} from "./whales.js?v=2026.10.11.6";
+import {createAppUpdater} from "./app-update.js?v=2026.10.11.6";
+const APP_VERSION = "2026.10.11.6";
 
 const $ = selector => document.querySelector(selector);
 const content = $("#content");
@@ -477,6 +477,10 @@ content.addEventListener("click",async event=>{
   }
 });
 content.addEventListener("change",async event=>{
+  if(event.target.matches("[data-whale-platform]")){
+    updateWhaleMarkets(event.target.form);
+    return;
+  }
   const subToggle=event.target.closest?event.target.closest("[data-sub-toggle]"):null;
   if(subToggle){
     const assetId=Number(subToggle.dataset.asset),alertType=subToggle.dataset.subToggle,on=subToggle.checked;
@@ -513,15 +517,16 @@ content.addEventListener("change",async event=>{
   }
   if(event.target.name==="market"){state.searchSequence++;state.searchResults=[];$("#search-results").textContent="市场已切换，请重新搜索。";}
 });
-content.addEventListener("input",event=>{
-  if(event.target.matches("[data-whale-search]")){
-    const form=event.target.form,select=form.querySelector('[name="coin"]'),previous=select.value;
-    const matches=matchingWhaleMarkets(state.whales?.markets||[],state.whales?.subscriptions||[],event.target.value);
-    select.replaceChildren(...matches.map(m=>new Option(`${m.coin} · ${m.name}`,m.coin)));
+function updateWhaleMarkets(form){
+    const select=form.querySelector('[name="coin"]'),previous=select.value;
+    const matches=matchingWhaleMarkets(state.whales?.markets||[],state.whales?.subscriptions||[],form.querySelector("[data-whale-search]").value,form.querySelector("[data-whale-platform]").value);
+    select.replaceChildren(...matches.map(m=>new Option(`${whaleMarketLabel(m)} · ${m.name}`,m.coin)));
     if(matches.some(m=>m.coin===previous))select.value=previous;
     form.querySelector('[type="submit"]').disabled=!matches.length;
     form.querySelector("[data-whale-search-count]").textContent=matches.length?`${matches.length} 个市场可添加`:"没有匹配的市场；仅显示官方已核验的合约。";
-  }
+}
+content.addEventListener("input",event=>{
+  if(event.target.matches("[data-whale-search]"))updateWhaleMarkets(event.target.form);
   if(event.target.id==="sub-search"){
     state.subSearch=event.target.value;
     const list=$("#sub-pool-list");

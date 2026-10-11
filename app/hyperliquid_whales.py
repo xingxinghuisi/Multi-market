@@ -42,8 +42,8 @@ def address_value(value):
 
 
 class PublicAPIError(RuntimeError):
-    def __init__(self, status, retry_seconds=60):
-        super().__init__(f"Hyperliquid HTTP {status}")
+    def __init__(self, status, retry_seconds=60, source="Hyperliquid"):
+        super().__init__(f"{source} HTTP {status}")
         self.status = status
         self.retry_seconds = retry_seconds
 
@@ -228,7 +228,7 @@ def event_text(event):
         action = "空单转多单" if event["side"] == "long" else "多单转空单"
     else:
         action = f"{side}{KINDS[kind]}"
-    title = f"🐋 {event['coin'].removeprefix('xyz:')} {action}"
+    title = f"🐋 {event.get('symbol') or event['coin'].removeprefix('xyz:')} {action}"
     lines = [title, *_execution_lines(event)]
     if kind == "closed":
         lines += [f"上次仓位：{_compact_money(event['previous_notional_usd'])}", "已实现盈亏：未提供"]
@@ -236,7 +236,9 @@ def event_text(event):
         label = "剩余仓位" if kind in {"increased", "reduced"} else "仓位"
         lines.append(f"{label}：{_compact_money(event['notional_usd'])}")
         entry = "未提供" if event["entry_price"] is None else f"${_plain_number(event['entry_price'])}"
-        leverage = "杠杆未提供" if event["leverage"] is None else f"{_plain_number(event['leverage'])}x"
+        leverage = "杠杆未提供" if event["leverage"] is None else f"{_plain_number(format(decimal(event['leverage']), '.6g'))}x"
+        if event.get("leverage_basis") == "initial_margin_fraction" and event["leverage"] is not None:
+            leverage += "（初始保证金率折算）"
         mode = {"cross": "全仓", "isolated": "逐仓"}.get(event["leverage_type"], "")
         lines.append(f"开仓均价：{entry}｜{leverage}{' ' + mode if mode else ''}")
         pnl = event.get("unrealized_pnl")
@@ -246,11 +248,16 @@ def event_text(event):
             amount = decimal(pnl)
             sign = "+" if amount > 0 else "-" if amount < 0 else ""
             lines.append(f"浮动盈亏：{sign}${abs(amount):,.2f}")
-    lines.append(f"地址：{event['address'][:8]}…{event['address'][-6:]}")
+    if event.get("venue") == "lighter":
+        wallet = event.get("wallet_address")
+        lines.append((f"地址：{wallet[:8]}…{wallet[-6:]} · " if wallet else "") + f"账户 #{event['account_index']}")
+    else:
+        lines.append(f"地址：{event['address'][:8]}…{event['address'][-6:]}")
     stamp = datetime.fromtimestamp(event["snapshot_ms"] / 1000, timezone(timedelta(hours=8))).strftime("%m/%d %H:%M")
     if (event.get("aggregation") or {}).get("event_count", 1) > 1:
         start = datetime.fromtimestamp(event["aggregation"]["from_ms"] / 1000,
                                       timezone(timedelta(hours=8))).strftime("%m/%d %H:%M")
         stamp = f"{start}–{stamp}"
-    lines.append(f"trade.xyz · {stamp} 北京时间")
+    source = "Lighter 主网" if event.get("venue") == "lighter" else "trade.xyz"
+    lines.append(f"{source} · {stamp} 北京时间")
     return title, "\n".join(lines)

@@ -1,6 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {whalePage,matchingWhaleMarkets} from "../web/static/whales.js";
+import {whalePage,matchingWhaleMarkets,whaleMarketLabel} from "../web/static/whales.js";
+
+test("same ticker on two venues stays selectable independently and shows account identity",()=>{
+  const markets=[{coin:"xyz:KORU",name:"ETF"},{coin:"lighter:mainnet:226",symbol:"KORU",name:"KORU 永续",venue:"lighter",source:"Lighter 主网",reduce_only:true,volume_24h_usd:"0"}];
+  assert.deepEqual(matchingWhaleMarkets(markets,[{coin:"xyz:KORU"}],"koru","lighter"),[markets[1]]);
+  assert.deepEqual(matchingWhaleMarkets(markets,[],"koru","trade_xyz"),[markets[0]]);
+  assert.ok(whaleMarketLabel(markets[1]).includes("仅减仓"));
+  const html=whalePage({markets,sources:[{id:"lighter",label:"Lighter 主网",runtime:{online:true,connected:true}}],
+    positions:[{coin:markets[1].coin,symbol:"KORU",venue:"lighter",account_index:1234,wallet_address:null,
+      qty:"1",notional_usd:"2000000",leverage:"20",leverage_basis:"initial_margin_fraction"}]},true);
+  assert.ok(html.includes("data-whale-platform")&&html.includes("Lighter 账户 #1234"));
+  assert.ok(html.includes("初始保证金率折算杠杆"));
+  assert.ok(html.includes("共享推送服务未连接"));
+  assert.ok(!html.includes('<span class="whale-address">lighter:'));
+});
 
 test("market search uses the verified catalog, includes non-equities and excludes existing subscriptions",()=>{
   const markets=[{coin:"xyz:KORU",name:"韩国 ETF"},{coin:"xyz:GOLD",name:"GOLD 永续合约"},{coin:"xyz:AAPL",name:"AAPL 永续合约"}];

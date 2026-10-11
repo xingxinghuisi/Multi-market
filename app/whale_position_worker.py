@@ -16,12 +16,13 @@ from websockets_proxy import Proxy, proxy_connect
 
 from database import SessionLocal, engine
 import models  # Register the existing referenced tables; never recreate their data.
-from hyperliquid_whales import PublicAPIError, PublicClient, WS_URL, address_value, decimal, milliseconds, parse_positions, position_event
+from hyperliquid_whales import PublicAPIError, PublicClient, WS_URL, decimal, milliseconds, parse_positions, position_event
 from whale_models import (WhaleAddress, WhaleEventDecision, WhaleMarketAddress,
                           WhalePositionDelivery, WhalePositionEvent, WhaleRuntime,
                           WhaleSubscription, initialize_whale_tables)
 from whale_position_service import deliver_pending
 from whale_execution import execution_details, fill_window
+from whale_sources import account_scope, candidate_value, runtime_id, venue_for
 
 load_dotenv()
 
@@ -30,7 +31,7 @@ def log(message):
     print(f"[WHALE POSITIONS] {message}", flush=True)
 
 
-def remember_trades(trades, coins, cap):
+def remember_trades(trades, coins, cap, venue="trade_xyz"):
     """All valid counterparties are candidates, including small/split fills."""
     now = milliseconds()
     candidates = {}
@@ -48,14 +49,14 @@ def remember_trades(trades, coins, cap):
         except (KeyError, TypeError, ValueError):
             continue
         for value in users:
-            address = address_value(value)
+            address = candidate_value(value, venue)
             if address:
                 candidates[address] = max(candidates.get(address, 0), stamp)
                 key = (trade["coin"], address)
                 market_trades[key] = max(market_trades.get(key, 0), stamp)
     dropped = 0
     with SessionLocal() as db:
-        count = db.scalar(select(func.count()).select_from(WhaleAddress))
+        count = db.scalar(select(func.count()).select_from(WhaleAddress).where(account_scope(WhaleAddress.address, venue)))
         accepted = set()
         for address, stamp in candidates.items():
             row = db.get(WhaleAddress, address)
@@ -85,17 +86,19 @@ def remember_trades(trades, coins, cap):
     return dropped, max(candidates.values(), default=0)
 
 
-def scan_one(client, floors):
+def scan_one(client, floors, venue="trade_xyz"):
     """Advance state and record changes in the same transaction, only on valid snapshots."""
     now = milliseconds()
     with SessionLocal() as db:
-        row = db.scalar(select(WhaleAddress).where(WhaleAddress.next_check_ms <= now)
+        row = db.scalar(select(WhaleAddress).where(WhaleAddress.next_check_ms <= now,
+                        account_scope(WhaleAddress.address, venue))
                         .order_by(WhaleAddress.next_check_ms, WhaleAddress.discovered_ms).limit(1))
         if row is None or not floors:
             return None
         address = row.address
         try:
-            stamp, positions = parse_positions(client.positions(address), floors)
+            stamp, positions = (client.snapshot(address, floors) if venue == "lighter"
+                                else parse_positions(client.positions(address), floors))
             if stamp <= row.snapshot_ms or now - stamp > 120000:
                 raise ValueError("Stale snapshot")
             previous = row.positions or {}
@@ -105,6 +108,10 @@ def scan_one(client, floors):
                 active = active or decimal(current["notional_usd"]) >= floors[coin]
                 payload = position_event(row.address, coin, previous.get(coin), current, stamp)
                 if payload and decimal(payload["qualifying_usd"]) >= floors[coin]:
+                    if venue == "lighter":
+                        for field in ("source", "venue", "symbol", "wallet_address", "account_index",
+                                      "snapshot_basis", "leverage_basis"):
+                            payload[field] = current.get(field)
                     events.append(payload)
             # One optional fill request per wallet scan, shared by all changed
             # qualifying markets. A failure must not discard a verified position.
@@ -115,7 +122,7 @@ def scan_one(client, floors):
                     fills = client.fills(address, min(w[0] for w in windows), stamp)
                 except Exception as error:
                     fill_error = type(error).__name__
-                    if isinstance(error, PublicAPIError) and (error.status == 429 or error.status >= 500):
+                    if isinstance(error, PublicAPIError) and (error.status in (405, 429) or error.status >= 500):
                         retry_ms = milliseconds() + error.retry_seconds * 1000
                     log(f"Execution price unavailable: {fill_error}")
             for payload in events:
@@ -139,18 +146,20 @@ def scan_one(client, floors):
             db.commit()
             label = str(error) if isinstance(error, (ValueError, RuntimeError)) else type(error).__name__
             retry_ms = now + (error.retry_seconds * 1000 if isinstance(error, PublicAPIError) and
-                             (error.status == 429 or error.status >= 500) else 10000)
+                             (error.status in (405, 429) or error.status >= 500) else 10000)
             return {"last_scan_error": label[:100], "last_scan_failure_ms": now,
                     "scan_retry_ms": retry_ms}
 
 
-def config_and_heartbeat(runtime):
+def config_and_heartbeat(runtime, venue="trade_xyz"):
     with SessionLocal() as db:
         floors = dict(db.execute(select(WhaleSubscription.coin, func.min(WhaleSubscription.min_position_usd))
             .where(WhaleSubscription.enabled.is_(True)).group_by(WhaleSubscription.coin)).all())
-        row = db.get(WhaleRuntime, 1)
+        floors = {coin: value for coin, value in floors.items() if venue_for(coin) == venue}
+        ident = runtime_id(venue)
+        row = db.get(WhaleRuntime, ident)
         if row is None:
-            row = WhaleRuntime(id=1, data={})
+            row = WhaleRuntime(id=ident, data={})
             db.add(row)
         data = {**runtime, "heartbeat_ms": milliseconds()}
         row.data = data
@@ -158,16 +167,18 @@ def config_and_heartbeat(runtime):
         return floors
 
 
-def housekeeping():
+def housekeeping(venue="trade_xyz"):
     with SessionLocal() as db:
-        cutoff = milliseconds() - 7 * 86400000
-        old_keys = select(WhalePositionEvent.event_key).where(WhalePositionEvent.observed_ms < cutoff)
-        db.execute(delete(WhaleEventDecision).where(WhaleEventDecision.event_key.in_(old_keys)))
-        db.execute(delete(WhalePositionDelivery).where(WhalePositionDelivery.event_key.in_(old_keys)))
-        db.execute(delete(WhalePositionEvent).where(WhalePositionEvent.observed_ms < cutoff))
+        if venue == "trade_xyz":  # The delivery coordinator alone prunes shared events.
+            cutoff = milliseconds() - 7 * 86400000
+            old_keys = select(WhalePositionEvent.event_key).where(WhalePositionEvent.observed_ms < cutoff)
+            db.execute(delete(WhaleEventDecision).where(WhaleEventDecision.event_key.in_(old_keys)))
+            db.execute(delete(WhalePositionDelivery).where(WhalePositionDelivery.event_key.in_(old_keys)))
+            db.execute(delete(WhalePositionEvent).where(WhalePositionEvent.observed_ms < cutoff))
         # Reclaim cold, verified-empty candidates only. Never evict a known open position.
         cold = db.scalars(select(WhaleAddress).where(WhaleAddress.last_trade_ms < milliseconds() - 86400000,
-                                                   WhaleAddress.checked_ms > 0)).all()
+                                                   WhaleAddress.checked_ms > 0,
+                                                   account_scope(WhaleAddress.address, venue))).all()
         for row in cold:
             if all(decimal(p["qty"]) == 0 for p in row.positions.values()):
                 db.execute(delete(WhaleMarketAddress).where(WhaleMarketAddress.address == row.address))

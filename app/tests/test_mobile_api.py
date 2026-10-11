@@ -480,6 +480,42 @@ def test_whale_feed_filters_threshold_and_flags_stale_snapshots(client):
     assert result["positions"] == [] and result["events"] == []
 
 
+def test_lighter_catalog_is_independent_and_account_feed_keeps_source_identity(client):
+    from hyperliquid_whales import milliseconds
+    from whale_models import WhaleAddress, WhaleRuntime
+    seed_whale_catalog()
+    body = {"coin": "lighter:mainnet:226", "min_position_usd": 1000}
+    assert client.put("/api/whales/subscriptions", json=body).status_code == 422
+    with api.app.state.auth_session_factory() as db:
+        db.add(WhaleRuntime(id=2, data={"heartbeat_ms": milliseconds(), "catalog_ms": milliseconds(),
+            "markets": [{"coin": body["coin"], "symbol": "KORU", "name": "Synthetic Lighter market",
+                         "reduce_only": True, "volume_24h_usd": "0"}]}))
+        p = {"qty": "-100000", "notional_usd": "2000000", "entry_price": "19.5",
+             "leverage": "20", "leverage_type": "isolated", "wallet_address": "0x"+"a"*40,
+             "account_index": 1234, "symbol": "KORU", "snapshot_ms": milliseconds()}
+        db.add(WhaleAddress(address="lighter:mainnet:1234", discovered_ms=1, last_trade_ms=1,
+                            checked_ms=milliseconds(), positions={body["coin"]: p}))
+        db.commit()
+    assert client.put("/api/whales/subscriptions", json=body).status_code == 200
+    assert client.put("/api/whales/subscriptions", json={"coin": "xyz:KORU"}).status_code == 200
+    assert client.put("/api/whales/subscriptions", json={"coin": "lighter:mainnet:999"}).status_code == 422
+    assert client.put("/api/whales/subscriptions", json={"coin": "lighter:robinhood:226"}).status_code == 422
+    data = client.get("/api/whales").json()
+    assert len(data["subscriptions"]) == 2 and len(data["positions"]) == 1
+    assert data["sources"][0]["runtime"]["address_count"] == 0
+    assert data["sources"][1]["runtime"]["address_count"] == 1
+    assert data["positions"][0]["symbol"] == "KORU" and data["positions"][0]["source"] == "Lighter 主网"
+    assert data["positions"][0]["account_index"] == 1234 and "private-test-target" not in str(data)
+    with api.app.state.auth_session_factory() as db:
+        row = db.get(WhaleRuntime, 2)
+        row.data = {**row.data, "catalog_ms": 1}
+        db.commit()
+    assert client.put("/api/whales/subscriptions", json=body).status_code == 503
+    assert client.put("/api/whales/subscriptions", json={"coin": "xyz:KORU"}).status_code == 200
+    assert client.put("/api/whales/subscriptions", json={**body, "enabled": False}).status_code == 200
+    assert client.get("/api/whales").json()["positions"] == []
+
+
 def test_whale_policy_settings_validate_and_legacy_clients_preserve_new_fields(client):
     seed_whale_catalog()
     body = {"coin": "xyz:KORU", "min_change_usd": 12000, "min_change_pct": 1.2,

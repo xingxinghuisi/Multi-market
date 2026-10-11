@@ -1,6 +1,6 @@
 # 下一巨鲸数据源核验 / Next whale venue
 
-用户确定的筛选口径：**永续 DEX、近 30 天成交量前三**，且能公开发现账户并查询他人仓位，不要求用户提供已知巨鲸地址。当前功能仍只接入 Hyperliquid / trade.xyz；本记录是下一阶段的接入依据，不表示已上线第二平台。
+用户确定的筛选口径：**永续 DEX、近 30 天成交量前三**，且能公开发现账户并查询他人仓位，不要求用户提供已知巨鲸地址。本记录保留选型时的排名快照；Lighter 主网现已完成代码接入，数据语义、测试及 VPS 升级见 [Lighter 说明](lighter-whales.md)。代码接入不等于 VPS 已更新。
 
 ## 2026-10-11 核验
 
@@ -10,7 +10,7 @@
 | --- | --- | ---: | --- |
 | 1 | Hyperliquid | $200.425B | 已接入其 trade.xyz 市场 |
 | 2 | Variational | $73.309B | 公开 API 文档目前提供市场统计，未确认可用的任意钱包仓位发现接口 |
-| 3 | Lighter | $60.550B | 下一接入候选；已验证公开账户读取与股票合约目录 |
+| 3 | Lighter | $60.550B | 已接入主网公开成交与仓位；不含 Robinhood |
 | 4 | Aster | $56.091B | 本次口径不在前三，不列为下一接入对象 |
 
 此处排名来自公开页面及其完整页面数据中的 `protocols / total30d`，是当日快照，会变化；不是本应用实时排名功能。尝试 DeFiLlama derivatives REST overview 返回 HTTP 402，因此未依赖该受限接口。上报成交量与规范化成交量并非同一指标，本记录不据此评定成交质量。
@@ -19,7 +19,7 @@
 
 ## 为什么优先 Lighter
 
-[Lighter 官方账户 SDK 文档](https://github.com/elliottech/lighter-python/blob/main/docs/AccountApi.md) 支持按账户索引或 L1 地址查询账户；开发时对主网 `GET /api/v1/account?by=index&value=1` 无密钥读取返回成功，含账户索引、L1 地址和 positions 容器。这个样本无持仓，不能据此冒充已验证某个真实巨鲸；非零仓位、分页完整性和实时成交链仍需下一阶段验收。
+[Lighter 官方账户 SDK 文档](https://github.com/elliottech/lighter-python/blob/main/docs/AccountApi.md) 支持按账户索引或 L1 地址查询账户。最初无持仓样本仅证明接口可读；本次进一步从真实 BTC 公开成交发现账户，再通过新适配器无密钥核验了非零 BTC 仓位、L1 地址及账户成交历史。分页和身份错误有隔离测试，VPS 持续运行仍待部署验收。
 
 [官方 WebSocket 文档](https://apidocs.lighter.xyz/docs/websocket-reference) 的公开成交结构提供买卖双方账户索引，可作为自动发现入口；账户仓位结构包含方向、数量、平均开仓价、仓位价值、未实现盈亏、保证金模式及初始保证金比例。杠杆设置的换算和字段语义需单独核验，不把实际资金杠杆冒充用户设置。
 
@@ -27,7 +27,7 @@
 
 | 符号 | market_id | 状态 |
 | --- | ---: | --- |
-| KORU | 226 | active |
+| KORU | 226 | active，但 force_reduce_only=true，24h 成交为零 |
 | NVDA | 110 | active |
 | TSLA | 112 | active |
 | AAPL | 113 | active |
@@ -38,15 +38,15 @@
 
 [Variational 当前官方 API 文档](https://docs.variational.io/technical-documentation/api) 提供 `/metadata/stats` 市场统计；文档中的交易 API 尚未开放，未找到满足自动发现任意账户仓位的数据链。故即使排名第二，也不把其统计接口充作巨鲸仓位源；后续若公开能力变化再核验。
 
-## 下一阶段范围
+## 本次实现与后续验收
 
-1. 只读验证 Lighter 主部署：有效目录 → 成交对手账户索引 → 账户/L1 地址 → 完整非零仓位；确认分页、时间、限流及断线恢复。
-2. 增加独立数据适配器及平台/部署标识，兼容现有 trade.xyz 订阅；复用已完成的个人过滤、累计与通知机制。
-3. 前端选择平台、显示准确市场和来源；事件、地址、仓位及去重均按平台/部署隔离。没有完整数据时明确缺失，不推算虚假开仓或成交价格。
-4. 隔离测试及小范围部署验收通过后开放；接入前复核近 30 天排名和目录状态。
+1. 已完成主网只读数据链、独立适配器、平台/部署隔离及个人推送规则复用。
+2. 已添加平台选择、真实目录状态、来源与子账户标识、分平台运行状态。
+3. 已添加坏响应、分页、时间单位、保证金率、限流、身份与去重测试；成交不完整时价格未提供。
+4. 后续在 VPS 小范围开启有成交的市场，检查持续采集、队列与 Telegram 接收。排名与目录会变化，下一平台接入前重新核验。
 
 ## English
 
 The agreed scope is perpetual DEXs ranked by trailing 30-day volume, with publicly discoverable accounts and positions. On 2026-10-11, DeFiLlama's reported-volume protocol aggregates place Hyperliquid, Variational and Lighter first through third. Lighter includes its main and Robinhood deployments; its main deployment alone is not third. Parent and child totals must not be double-counted.
 
-Lighter is the next candidate: its public mainnet account endpoint succeeded without credentials, and its current directory includes active KORU, NVDA, TSLA, AAPL and SKHYNIXUSD perpetuals. The tested account was empty; live nonzero position and execution reconciliation still need validation. Variational's current public documentation exposes market statistics but does not establish the required arbitrary-account discovery/position path. No second venue has been integrated by this change.
+Lighter mainnet is now implemented alongside trade.xyz, with public trade-to-account discovery, verified nonzero positions and unauthenticated account fill history. KORU is active but reduce-only with zero recent volume at verification; directory availability does not guarantee active whales. Variational's documentation still does not establish the required arbitrary-account discovery/position path. This code and isolated validation do not imply VPS deployment or Robinhood coverage.

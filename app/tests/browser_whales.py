@@ -39,6 +39,15 @@ def main():
                        {"coin":"xyz:GOLD","name":"Synthetic browser test non-equity market","max_leverage":10}]}))
         db.add(WhaleAddress(address=address,discovered_ms=1,last_trade_ms=1,
             checked_ms=milliseconds(),snapshot_ms=position["snapshot_ms"],positions={"xyz:KORU":position}))
+        db.add(WhaleRuntime(id=2, data={"catalog_ms":milliseconds(),"heartbeat_ms":milliseconds(),
+            "connected":True,"markets":[{"coin":"lighter:mainnet:226","symbol":"KORU",
+                "name":"Synthetic Lighter KORU","venue":"lighter","source":"Lighter 主网",
+                "reduce_only":True,"volume_24h_usd":"0"}]}))
+        lighter = {**position,"qty":"-100000","wallet_address":address,"account_index":1234,
+                   "leverage":"20","leverage_basis":"initial_margin_fraction","symbol":"KORU",
+                   "venue":"lighter","snapshot_ms":milliseconds(),"unrealized_pnl":"-100.5"}
+        db.add(WhaleAddress(address="lighter:mainnet:1234",discovered_ms=1,last_trade_ms=1,
+            checked_ms=milliseconds(),snapshot_ms=lighter["snapshot_ms"],positions={"lighter:mainnet:226":lighter}))
         db.commit()
 
     def get_db():
