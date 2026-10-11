@@ -1,5 +1,5 @@
 """Read-only Hyperliquid public data and conservative position classification."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import hashlib
 import os
@@ -167,39 +167,53 @@ def position_event(address, coin, previous, current, snapshot_ms):
     return payload
 
 
+def _plain_number(value):
+    text = format(decimal(value), "f")
+    return text.rstrip("0").rstrip(".") if "." in text else text
+
+
+def _compact_money(value):
+    amount = decimal(value)
+    for scale, unit in ((Decimal("1e8"), "亿"), (Decimal("1e4"), "万")):
+        if amount >= scale:
+            return f"${amount / scale:,.2f}{unit}"
+    return f"${amount:,.2f}"
+
+
 def event_text(event):
-    short = event["address"][:8] + "…" + event["address"][-6:]
+    """Concise notification copy; full source and snapshot details stay in the event."""
     side = "多单" if event["side"] == "long" else "空单"
-    title = f"🐋 {event['coin']} {KINDS[event['kind']]} · {side}"
-    value = decimal(event["notional_usd"])
-    text = f"{title} · ${value:,.0f}\n地址：{event['address']}\n"
-    if event["entry_price"] is not None:
-        text += f"当前仓位平均开仓价：${decimal(event['entry_price']):,.6f}\n"
-    if event["leverage"] is not None:
-        mode = {"cross": "全仓", "isolated": "逐仓"}.get(event["leverage_type"], "")
-        text += f"当前杠杆设置：{event['leverage']}x {mode}\n"
-    if event["previous_qty"] is not None:
-        text += f"仓位数量：{event['previous_qty']} → {event['qty']}\n"
+    kind = event["kind"]
+    if kind == "discovered":
+        action = f"新发现已有{side}"
+    elif kind == "opened":
+        action = f"新开{side}"
+    elif kind in {"increased", "reduced"}:
+        change = abs(abs(decimal(event["qty"])) - abs(decimal(event["previous_qty"])))
+        action = f"{side}{KINDS[kind]} {_plain_number(change)}"
+    elif kind == "flipped":
+        action = "空单转多单" if event["side"] == "long" else "多单转空单"
     else:
-        text += f"仓位数量：{event['qty']}\n"
-    text += f"当前仓位名义价值：${value:,.2f}\n"
-    if event["kind"] != "closed":
+        action = f"{side}{KINDS[kind]}"
+    title = f"🐋 {event['coin'].removeprefix('xyz:')} {action}"
+    lines = [title]
+    if kind == "closed":
+        lines += [f"上次仓位：{_compact_money(event['previous_notional_usd'])}", "已实现盈亏：未提供"]
+    else:
+        label = "剩余仓位" if kind in {"increased", "reduced"} else "仓位"
+        lines.append(f"{label}：{_compact_money(event['notional_usd'])}")
+        entry = "未提供" if event["entry_price"] is None else f"${_plain_number(event['entry_price'])}"
+        leverage = "杠杆未提供" if event["leverage"] is None else f"{_plain_number(event['leverage'])}x"
+        mode = {"cross": "全仓", "isolated": "逐仓"}.get(event["leverage_type"], "")
+        lines.append(f"开仓均价：{entry}｜{leverage}{' ' + mode if mode else ''}")
         pnl = event.get("unrealized_pnl")
         if pnl is None:
-            text += "当前未实现盈亏：未提供\n"
+            lines.append("浮动盈亏：未提供")
         else:
             amount = decimal(pnl)
             sign = "+" if amount > 0 else "-" if amount < 0 else ""
-            text += f"当前未实现盈亏：{sign}${abs(amount):,.2f}\n"
-    if event["kind"] == "closed":
-        text += f"上次核验名义价值：${decimal(event['previous_notional_usd']):,.2f}\n"
-        text += "已实现盈亏：未提供（需平仓成交记录）\n"
-    stamp = datetime.fromtimestamp(event["snapshot_ms"] / 1000, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    text += f"核验时间：{stamp}\n来源：{SOURCE}\n"
-    if event.get("previous_snapshot_ms"):
-        prior = datetime.fromtimestamp(event["previous_snapshot_ms"] / 1000, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        text += f"上次仓位核验：{prior}\n"
-    text += ("首次发现的已有持仓，不代表刚开仓。" if event["kind"] == "discovered" else
-             "两次仓位核验间的净变化；不代表逐笔成交或精确开仓时间。")
-    text += "\n同名 Binance USDT 合约为不同市场。"
-    return title + " · " + short, text
+            lines.append(f"浮动盈亏：{sign}${abs(amount):,.2f}")
+    lines.append(f"地址：{event['address'][:8]}…{event['address'][-6:]}")
+    stamp = datetime.fromtimestamp(event["snapshot_ms"] / 1000, timezone(timedelta(hours=8))).strftime("%m/%d %H:%M")
+    lines.append(f"trade.xyz · {stamp} 北京时间")
+    return title, "\n".join(lines)

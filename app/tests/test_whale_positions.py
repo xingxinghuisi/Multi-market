@@ -55,10 +55,11 @@ def test_first_snapshot_is_discovery_and_price_only_change_is_not_increase():
     assert initial["previous_qty"] is None
     assert position_event(A, COIN, position(), position(value="3000000"), milliseconds()) is None
     title, text = event_text(initial)
-    assert title.startswith("🐋 xyz:KORU 新发现已有仓位")
-    assert "首次发现的已有持仓，不代表刚开仓" in text
-    assert "当前杠杆设置：10x" in text and "MIRAO" not in text
-    assert "Hyperliquid / trade.xyz" in text
+    assert title == "🐋 KORU 新发现已有多单"
+    assert text.splitlines()[0] == title and len(text.splitlines()) == 6
+    assert "开仓均价：$19.5｜10x 逐仓" in text and "MIRAO" not in text
+    assert "trade.xyz" in text and "北京时间" in text
+    assert A not in text and f"地址：{A[:8]}…{A[-6:]}" in text
 
 
 @pytest.mark.parametrize("source,expected,display", [
@@ -74,7 +75,7 @@ def test_unrealized_pnl_uses_source_value_without_inventing_missing_profit(sourc
     assert current["unrealized_pnl"] == expected
     event = position_event(A, COIN, None, current, stamp)
     assert event["unrealized_pnl"] == expected
-    assert f"当前未实现盈亏：{display}" in event_text(event)[1]
+    assert f"浮动盈亏：{display}" in event_text(event)[1]
     # Mark-to-market P&L changes alone must not trigger a new position event.
     assert position_event(A, COIN, current, {**current,"unrealized_pnl":"5000"}, stamp+1) is None
 
@@ -88,7 +89,7 @@ def test_old_snapshots_and_closures_do_not_invent_realized_profit():
     assert closed["unrealized_pnl"] is None
     message = event_text(closed)[1]
     assert "已实现盈亏：未提供" in message
-    assert "当前未实现盈亏" not in message
+    assert "浮动盈亏" not in message
 
 
 @pytest.mark.parametrize("before,after,kind,side", [
@@ -103,6 +104,14 @@ def test_signed_quantity_transitions(before, after, kind, side):
     result = position_event(A, COIN, old, new, milliseconds())
     assert result["kind"] == kind and result["side"] == side
     assert float(result["qualifying_usd"]) >= 2000000
+    title, text = event_text(result)
+    if kind in {"increased", "reduced"}:
+        assert title.endswith(str(abs(abs(int(after))-abs(int(before)))))
+        assert "剩余仓位：" in text
+    if kind == "closed":
+        assert title.endswith("平仓") and "上次仓位：" in text
+    if kind == "flipped":
+        assert "多单转空单" in title
 
 
 @pytest.mark.parametrize("change", [
