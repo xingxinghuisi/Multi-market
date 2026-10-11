@@ -4,10 +4,10 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from hyperliquid_whales import event_text, milliseconds
+from hyperliquid_whales import decimal, event_text, milliseconds
 from models import Notification, User
 from telegram_service import CHAT_ID, send_telegram_message
-from whale_models import (WhaleAdjustmentBatch, WhaleEventDecision, WhalePositionDelivery,
+from whale_models import (WhaleAddress, WhaleAdjustmentBatch, WhaleEventDecision, WhalePositionDelivery,
                           WhalePositionEvent, WhalePushPolicy, WhaleSubscription)
 from whale_push_policy import (ADJUSTMENTS, PRIORITY, adjustment_passes, can_merge,
                                discard_batch, merged_payload, policy_for)
@@ -105,6 +105,14 @@ def flush_batch(db, batch, sub, now):
             or now - event.observed_ms >= 3600000):
         discard_batch(db, batch, "inactive")
         return
+    wallet = db.get(WhaleAddress, batch.address)
+    current = wallet.positions.get(event.coin) if wallet else None
+    if (current and current.get("snapshot_ms", wallet.snapshot_ms) > data["payload"]["snapshot_ms"]
+            and decimal(current["qty"]) != decimal(data["payload"]["qty"])):
+        # A later subthreshold close may not create a public event at all.
+        # Never send an older buffered position after verification superseded it.
+        discard_batch(db, batch, "superseded")
+        return
     policy = policy_for(db, sub)
     if event.qualifying_usd < sub.min_position_usd:
         discard_batch(db, batch, "below_position")
@@ -126,12 +134,14 @@ def process_event(db, event, sub):
         result = record_decision(db, event, sub, "inactive")
         db.commit()
         return result
+    batch = db.get(WhaleAdjustmentBatch, (sub.id, event.address))
     if event.qualifying_usd < sub.min_position_usd:
+        if batch:
+            discard_batch(db, batch, "below_position")
         result = record_decision(db, event, sub, "below_position")
         db.commit()
         return result
     payload, policy = event.payload, policy_for(db, sub)
-    batch = db.get(WhaleAdjustmentBatch, (sub.id, event.address))
     if payload["kind"] not in ADJUSTMENTS:
         if batch:
             discard_batch(db, batch, "superseded")

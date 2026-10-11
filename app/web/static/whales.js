@@ -5,7 +5,7 @@ const stamp=value=>value?new Date(value).toLocaleString("zh-CN"):"尚未收到";
 const money=value=>value==null?"未提供":`$${n(value,2)}`;
 const pnlMoney=value=>value==null||value===""||!Number.isFinite(Number(value))?"未提供":`${Number(value)>0?"+":Number(value)<0?"-":""}$${Math.abs(Number(value)).toLocaleString("zh-CN",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
 const address=value=>`<span class="whale-address">${e(value)}</span>`;
-const outcomes={sent:"已发送 Telegram",in_app:"已存站内通知",below_position:"仓位规模未达标",below_change:"调仓门槛未达标",cooldown:"提醒间隔内",buffering:"累计等待中",merged:"已并入累计消息",failed:"发送失败",pending:"等待处理",inactive:"订阅已停用",settings_changed:"设置变更已取消",superseded:"方向变化已取消",cancelled:"已取消重试",duplicate:"已去重"};
+const outcomes={sent:"已发送 Telegram",in_app:"已存站内通知",below_position:"仓位规模未达标",below_change:"调仓门槛未达标",cooldown:"提醒间隔内",buffering:"累计等待中",merged:"已并入累计消息",failed:"发送失败",pending:"等待处理",inactive:"订阅已停用",settings_changed:"设置变更已取消",superseded:"后续仓位变化已取消",cancelled:"已取消重试",duplicate:"已去重"};
 export function matchingWhaleMarkets(markets,subscriptions,query="") {
   const term=query.trim().toLocaleLowerCase();
   const added=new Set(subscriptions.map(s=>s.coin));

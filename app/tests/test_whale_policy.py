@@ -204,6 +204,29 @@ def test_qualified_batch_waits_for_cooldown_and_flushes_without_another_trade(st
         assert db.get(WhaleEventDecision, (sub.user_id, change.event_key)).outcome == "sent"
 
 
+@pytest.mark.parametrize("public_event", [True, False])
+def test_later_subthreshold_close_cancels_outdated_buffer_even_without_a_public_event(state, public_event):
+    factory, now, sent = state
+    with factory() as db:
+        sub = subscription(db, cooldown=30)
+        service.process_event(db, event(db, None, 100000, now[0]), sub)
+        now[0] += 10000
+        reduced = event(db, 100000, 40000, now[0])
+        assert service.process_event(db, reduced, sub) == "buffering"
+        reduced.dispatched_ms = now[0]; db.commit()
+        now[0] += 40000
+        if public_event:
+            closed = event(db, 40000, 0, now[0])
+            assert service.process_event(db, closed, sub) == "below_position"
+        else:
+            db.add(WhaleAddress(address=A, discovered_ms=1, last_trade_ms=1,
+                checked_ms=now[0], snapshot_ms=now[0], positions={COIN: position(0, now[0])}))
+            db.commit()
+        service.flush_batches(db)
+        assert len(sent) == 1 and db.scalars(select(WhaleAdjustmentBatch)).all() == []
+        assert db.get(WhaleEventDecision, (sub.user_id, reduced.event_key)).outcome in {"below_position", "superseded"}
+
+
 def test_direction_change_does_not_merge_and_unchanged_poll_gap_can_merge(state):
     factory, now, sent = state
     with factory() as db:
