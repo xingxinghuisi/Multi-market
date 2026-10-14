@@ -1,7 +1,7 @@
 /* Cache only the public application shell. Financial and account data stay network-only. */
-const CACHE = "market-radar-shell-v17";
-const VERSION = "2026.10.12.2";
-const SHELL = ["/", ...["mobile.css","mobile.js","mobile-core.js","whales.js","app-update.js","signals.js"].map(name=>`/static/${name}?v=${VERSION}`),
+const CACHE = "market-radar-shell-v18";
+const VERSION = "2026.10.14.1";
+const SHELL = ["/", ...["mobile.css","mobile.js","mobile-core.js","whales.js","app-update.js","signals.js","smart-money.js"].map(name=>`/static/${name}?v=${VERSION}`),
   "/static/radar-icon.svg", "/static/radar-192.png", "/static/radar-512.png", "/static/manifest.webmanifest"];
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));

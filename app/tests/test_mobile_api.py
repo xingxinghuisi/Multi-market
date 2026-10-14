@@ -66,6 +66,31 @@ def test_profile_reports_capabilities_without_contact_details(client):
     assert "private-test-target" not in response.text
 
 
+def test_smart_money_requires_account_and_a_supported_contract(client, monkeypatch):
+    import mobile_api
+    from binance_smart_money import parse_overview, SmartMoneyUnavailable
+    from test_binance_smart_money import payload, NOW
+    calls = []
+    def read(symbol):
+        calls.append(symbol)
+        return parse_overview(payload(symbol), symbol, NOW)
+    monkeypatch.setattr(mobile_api.smart_money_client, 'get', read)
+    assert client.get('/api/assets/1/smart-money').status_code == 404  # Spot is a different market.
+    assert client.get('/api/assets/999/smart-money').status_code == 404
+    response = client.get('/api/assets/2/smart-money')
+    assert response.status_code == 200 and response.headers['cache-control'] == 'no-store'
+    assert response.json()['market'] == 'binance:usdm:BTCUSDT'
+    assert calls == ['BTCUSDT']
+    anonymous = TestClient(api.app)
+    assert anonymous.get('/api/assets/2/smart-money').status_code == 401
+    anonymous.close()
+    def unavailable(_symbol):
+        raise SmartMoneyUnavailable('rate_limited', 14400)
+    monkeypatch.setattr(mobile_api.smart_money_client, 'get', unavailable)
+    response = client.get('/api/assets/2/smart-money')
+    assert response.status_code == 503 and response.headers['retry-after'] == '14400'
+
+
 def test_catalog_delete_is_private_and_preserves_shared_market_data(client):
     from fastapi.testclient import TestClient
 

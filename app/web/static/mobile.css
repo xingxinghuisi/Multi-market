@@ -315,6 +315,12 @@ html[data-theme="dark"] .switch input:checked+.tr{background:#228a52}
 .whale-address{display:block;font:12px/1.8 ui-monospace,monospace;overflow-wrap:anywhere;color:var(--muted)}
 .whale-numbers{display:flex;flex-wrap:wrap;gap:16px;margin:12px 0}.whale-numbers span{font-size:12px;color:var(--muted)}
 .whale-numbers strong{display:block;color:var(--ink);font-size:16px;margin-top:4px}
+.smart-money-sides{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:16px 0}
+.smart-money-sides section{min-width:0}.smart-money-sides h3{margin:0 0 12px}
+.smart-money-sides dl{margin:0}.smart-money-sides dl>div{padding:9px 0;border-bottom:1px solid var(--line)}
+.smart-money-sides dt{font-size:12px;color:var(--muted)}.smart-money-sides dd{margin:4px 0 0;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.smart-money-card .actions{flex-wrap:wrap}.smart-money-card .quote-caption{overflow-wrap:anywhere}
+@media(max-width:420px){.smart-money-sides{grid-template-columns:1fr}}
 .form-card .whale-enabled{display:flex;align-items:center;gap:10px}.form-card .whale-enabled input{width:20px;height:20px;flex:none}
 
 /* Technical signal settings reuse the existing responsive cards. */

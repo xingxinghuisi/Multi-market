@@ -16,6 +16,7 @@ from sqlalchemy import select
 from models import AlertRule, AlertSubscription, Asset, Notification, TelegramChallenge, User, UserHiddenAsset, WatchlistItem
 from crypto_metrics import get_futures_metrics
 from longshort_metrics import get_longshort_metrics
+from binance_smart_money import client as smart_money_client, SmartMoneyUnavailable
 from subscription_service import supports_subscription, subscription_config, deliver_subscription_event
 from schemas import SubscriptionEvent
 from telegram_service import BOT_TOKEN, CHAT_ID, get_bot_username, send_telegram_message
@@ -209,6 +210,20 @@ def install_mobile_routes(app, get_db, get_default_user, read_binance_json):
         if asset is None:
             raise HTTPException(status_code=404, detail="Asset not found")
         return get_longshort_metrics(asset, read_binance_json)
+
+    @app.get('/api/assets/{asset_id}/smart-money')
+    def smart_money(asset_id: int, db=Depends(get_db)):
+        get_default_user(db)
+        asset = db.get(Asset, asset_id)
+        if not supports_subscription(asset) or not asset.enabled:
+            raise HTTPException(status_code=404, detail='仅支持已启用的 Binance USDT 合约')
+        try:
+            result = smart_money_client.get(asset.symbol)
+        except SmartMoneyUnavailable as error:
+            raise HTTPException(status_code=503, detail=str(error),
+                                headers={'Retry-After': str(error.retry_after)}) from None
+        from fastapi.responses import JSONResponse
+        return JSONResponse({**result, 'asset_id': asset.id}, headers={'Cache-Control': 'no-store'})
 
     @app.get("/api/internal/news-watchlist")
     def news_worker_watchlist(db=Depends(get_db)):
