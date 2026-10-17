@@ -91,6 +91,37 @@ def test_smart_money_requires_account_and_a_supported_contract(client, monkeypat
     assert response.status_code == 503 and response.headers['retry-after'] == '14400'
 
 
+def test_smart_money_values_only_its_futures_quote_and_hides_stale_amounts(client, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    import mobile_api
+    from binance_smart_money import parse_overview
+    from models import MarketQuote
+    from test_binance_smart_money import payload
+    now = datetime.now(timezone.utc)
+    milliseconds = int(now.timestamp()*1000)
+    raw = parse_overview(payload("BTCUSDT", milliseconds-8*3600000), "BTCUSDT", milliseconds)
+    monkeypatch.setattr(mobile_api.smart_money_client, "get", lambda symbol: raw)
+    with api.app.state.auth_session_factory() as db:
+        db.add(MarketQuote(asset_id=1, price=99999, event_time=now))  # Same-named Spot must not be used.
+        db.commit()
+    assert client.get('/api/assets/2/smart-money').json()["pnl"]["reason"] == "missing_quote"
+    with api.app.state.auth_session_factory() as db:
+        db.add(MarketQuote(asset_id=2, price=12, event_time=now))
+        db.commit()
+    result = client.get('/api/assets/2/smart-money').json()
+    assert result["pnl"]["price"] == 12 and result["pnl"]["basis"] == "latest_trade"
+    assert result["pnl"]["sides"]["long"]["whales_usdt"] == -150
+    assert result["pnl"]["sides"]["short"]["whales_usdt"] == 1050
+    assert "pnl" not in raw  # Shared market cache remains untouched.
+    with api.app.state.auth_session_factory() as db:
+        quote = db.query(MarketQuote).filter(MarketQuote.asset_id == 2).one()
+        quote.event_time = now-timedelta(minutes=3)
+        db.commit()
+    result = client.get('/api/assets/2/smart-money').json()
+    assert result["pnl"]["reason"] == "stale_quote"
+    assert not result["pnl"]["sides"] and result["sides"]["long"]["whales"] == 3
+
+
 def test_catalog_delete_is_private_and_preserves_shared_market_data(client):
     from fastapi.testclient import TestClient
 

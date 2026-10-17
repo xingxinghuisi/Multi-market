@@ -72,7 +72,10 @@ with sqlite3.connect('/app/data/market_radar.db') as db:
                       for table in ('users', 'assets', 'alert_rules', 'alert_subscriptions')]
     assert db.execute('SELECT COUNT(*) FROM smart_money_states').fetchone()[0] >= 0
 import smart_money_worker
-print('ADDITIVE_SCHEMA_OK; WORKER_IMPORT_OK')
+from smart_money_pnl import calculate
+assert calculate(100, 10, 12, True) == 200
+assert calculate(100, 10, 12, False) == -200
+print('ADDITIVE_SCHEMA_OK; WORKER_IMPORT_OK; PNL_CALCULATION_OK')
 PY
 changed=0
 rollback() {
@@ -98,7 +101,7 @@ trap rollback ERR
 docker image tag "$candidate" korea-market-radar-app:latest
 changed=1
 docker compose --env-file .env.production up -d --no-deps --force-recreate --wait --wait-timeout 90 api
-curl -fsS http://127.0.0.1:8000/api/client-version | python3 -c 'import json,sys; assert json.load(sys.stdin)["version"]=="2026.10.17.1"; print("API_VERSION_OK")'
+curl -fsS http://127.0.0.1:8000/api/client-version | python3 -c 'import json,sys; assert json.load(sys.stdin)["version"]=="2026.10.18.1"; print("API_VERSION_OK")'
 curl -fsS http://127.0.0.1:8000/openapi.json | python3 -c 'import json,sys; assert "/api/internal/smart-money/{asset_id}/poll" in json.load(sys.stdin)["paths"]; print("SMART_MONEY_POLL_ROUTE_OK")'
 docker compose --env-file .env.production up -d --no-deps --force-recreate smart_money_worker
 test "$(docker inspect korea-radar-smart-money --format '{{.State.Running}}')" = true

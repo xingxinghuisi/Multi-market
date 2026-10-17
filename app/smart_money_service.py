@@ -13,6 +13,7 @@ from binance_smart_money import client, number, SmartMoneyUnavailable
 from models import AlertSubscription, Asset
 from schemas import SubscriptionEvent
 from smart_money_models import SmartMoneyState
+from smart_money_pnl import attach_valuation, pnl_comparison
 from subscription_service import deliver_subscription_event, subscription_config, supports_subscription
 
 MAX_COMPARISON_GAP = 1800
@@ -71,10 +72,32 @@ def build_message(symbol, before, after, differences):
         else:
             lines.append(f"{side}巨鲸持仓数量：{format_number(change['before'])} → "
                          f"{format_number(change['after'])}（{change['pct']:+.2f}%）")
+    pnl = after.get("pnl") or {}
+    for side, label in (("long", "多头"), ("short", "空头")):
+        avg = after.get("sides", {}).get(side, {}).get("whale_avg_entry_price")
+        value = pnl.get("sides", {}).get(side, {}).get("whales_usdt")
+        entry = f"${format_number(avg)}" if avg is not None else "未提供"
+        lines.append(f"{label}巨鲸开仓均价：{entry}｜浮盈亏：{signed_money(value)}")
+    comparison = after.get("pnl_comparison") or {}
+    if comparison:
+        long_delta = comparison["sides"]["long"]["whales_usdt"]
+        short_delta = comparison["sides"]["short"]["whales_usdt"]
+        lines.append(f"较上次采样：多头 {signed_money(long_delta)}｜空头 {signed_money(short_delta)}")
+    if pnl.get("price") is not None:
+        quote_time = datetime.fromisoformat(pnl["quote_at"]).astimezone(UTC8).strftime("%m/%d %H:%M:%S")
+        lines.append(f"参考成交价：${format_number(pnl['price'])}（{quote_time} 北京时间）")
+    else:
+        lines.append("浮盈亏暂不可算：行情或持仓字段不足/过旧")
     start, end = (observed(item).astimezone(UTC8).strftime("%m/%d %H:%M") for item in (before, after))
     lines.extend([f"观察：{start} → {end} 北京时间",
-                  "币安汇总快照净变化，可能含样本成员变动；不是个人成交。源时间含义待核实。"])
+                  "浮盈亏为快照计算值，含价格/样本变化，不含费用；非已实现收益、不是个人成交。源时间含义待核实。"])
     return title, "\n".join(lines)
+
+
+def signed_money(value):
+    if value is None:
+        return "未提供"
+    return f"{'-' if value < 0 else '+' if value > 0 else ''}${abs(value):,.2f}"
 
 
 def process_snapshot(db, sub, asset, snapshot, now=None):
@@ -117,6 +140,8 @@ def process_snapshot(db, sub, asset, snapshot, now=None):
         state.status = "below_threshold" if not differences else "ready"
     # Persist the new comparison checkpoint before delivery, including filtered/cooldown intervals.
     # A restart never reconstructs earlier movements as fresh notifications.
+    snapshot = attach_valuation(db, asset, snapshot, now)
+    snapshot["pnl_comparison"] = pnl_comparison(before, snapshot)
     state.snapshot = snapshot
     db.commit()
     if not differences:
@@ -139,7 +164,8 @@ def monitoring_status(db, subscription):
     state = db.get(SmartMoneyState, subscription.id)
     return {"status": state.status if state else "waiting",
             "checked_at": state.checked_at if state else None,
-            "observed_at": (state.snapshot or {}).get("fetched_at") if state else None}
+            "observed_at": (state.snapshot or {}).get("fetched_at") if state else None,
+            "pnl_comparison": (state.snapshot or {}).get("pnl_comparison") if state else None}
 
 
 def install_smart_money_routes(app, get_db):

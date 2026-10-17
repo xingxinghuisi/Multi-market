@@ -1,0 +1,15 @@
+[
+  {"quantity":100,"entry":10,"price":12,"long":true,"expected":200},
+  {"quantity":100,"entry":10,"price":12,"long":false,"expected":-200},
+  {"quantity":100,"entry":15,"price":12,"long":true,"expected":-300},
+  {"quantity":100,"entry":15,"price":12,"long":false,"expected":300},
+  {"quantity":100,"entry":12,"price":12,"long":true,"expected":0},
+  {"quantity":0,"entry":null,"price":12,"long":false,"expected":0},
+  {"quantity":80.1,"entry":17.85225,"price":17.98600624,"long":false,"expected":-10.713874824},
+  {"quantity":null,"entry":10,"price":12,"long":true,"expected":null},
+  {"quantity":100,"entry":null,"price":12,"long":true,"expected":null},
+  {"quantity":100,"entry":0,"price":12,"long":true,"expected":null},
+  {"quantity":-1,"entry":10,"price":12,"long":true,"expected":null},
+  {"quantity":100,"entry":10,"price":0,"long":true,"expected":null},
+  {"quantity":true,"entry":10,"price":12,"long":true,"expected":null}
+]

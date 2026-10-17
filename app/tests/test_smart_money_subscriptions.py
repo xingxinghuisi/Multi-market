@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 import api
 from binance_smart_money import parse_overview, SmartMoneyUnavailable
 from database import Base
-from models import AlertSubscription, Asset, Notification, User
+from models import AlertSubscription, Asset, MarketQuote, Notification, User
 from schemas import SmartMoneyConfig
 from smart_money_models import SmartMoneyState, initialize_smart_money_tables
 import smart_money_service as service
@@ -100,7 +100,7 @@ def test_baseline_change_and_cache_are_durable_and_source_time_does_not_gate_the
     assert "多头巨鲸：65 → 62（-3 人）" in sent[0][0]
     assert "空头巨鲸：166 → 169（+3 人）" in sent[0][0]
     assert "不是个人成交" in sent[0][0] and "源时间含义待核实" in sent[0][0]
-    assert "开仓" not in sent[0][0] and "0x" not in sent[0][0]
+    assert "刚开仓" not in sent[0][0] and "0x" not in sent[0][0]
     status = client.get("/api/subscriptions").json()[0]["monitoring"]
     assert status["status"] == "sent" and status["observed_at"]
     # A second DB session/request still sees the checkpoint and persistent cooldown.
@@ -299,3 +299,41 @@ def test_failed_asset_does_not_starve_other_subscribed_assets():
     cursor = tick(load=load, poll=collect)
     tick(cursor, load=load, poll=collect)
     assert visited == [2, 3]
+
+
+def test_notifications_include_entry_pnl_and_deltas_without_price_only_spam(client, monkeypatch, source):
+    subscribe(client, min_whale_count_change=2)
+    worker(monkeypatch, client)
+    sent = []
+    monkeypatch.setattr(subscription_service, "send_telegram_message", lambda message, chat_id: sent.append(message) or True)
+    def update_quote(price):
+        with api.app.state.auth_session_factory() as db:
+            row = db.scalar(select(MarketQuote).where(MarketQuote.asset_id == 2))
+            if row is None:
+                row = MarketQuote(asset_id=2, price=price, event_time=Clock.moment)
+                db.add(row)
+            row.price, row.event_time = price, Clock.moment
+            db.commit()
+    update_quote(12)
+    assert poll(client)["results"][0]["status"] == "baseline"
+    advance()
+    update_quote(13)
+    source["long"] += 3
+    source["quantity"] = 110
+    assert poll(client)["results"][0]["status"] == "sent"
+    assert len(sent) == 1
+    assert "多头巨鲸开仓均价：$14｜浮盈亏：-$110.00" in sent[0]
+    assert "空头巨鲸开仓均价：$19｜浮盈亏：+$900.00" in sent[0]
+    assert "较上次采样：多头 +$90.00｜空头 -$150.00" in sent[0]
+    assert "参考成交价：$13" in sent[0] and "不含费用" in sent[0]
+    status = client.get("/api/subscriptions").json()[0]["monitoring"]
+    assert status["pnl_comparison"]["sides"]["long"]["whales_usdt"] == 90
+    # A new price alone updates the stored valuation but does not bypass cohort-change thresholds.
+    advance()
+    update_quote(14)
+    assert poll(client)["results"][0]["status"] == "below_threshold"
+    assert len(sent) == 1
+    comparison = client.get("/api/subscriptions").json()[0]["monitoring"]["pnl_comparison"]
+    assert comparison["sides"]["long"]["whales_usdt"] == 110
+    assert poll(client)["results"][0]["status"] == "cached"
+    assert client.get("/api/subscriptions").json()[0]["monitoring"]["pnl_comparison"] == comparison

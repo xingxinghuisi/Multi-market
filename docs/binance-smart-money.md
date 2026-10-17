@@ -83,6 +83,49 @@ API 分别返回源时间、最近成功抓取时间、源时间字段的滞后�
 
 该例在用户人数门槛设为 3 或更低时才触发，不会绕过默认 5 人门槛。
 
+## 群体浮动盈亏与均价（2026.10.18.1）
+
+2026-10-17 检查币安实际页面加载的[前端脚本](https://bin.bnbstatic.com/static/chunks/page-1f6e.4bdd9ec8.js)：
+总览的浮动盈亏由 `at` / `br` 组件计算；巨鲸标签传入 `longWhalesQty` / `shortWhalesQty` 和对应 `AvgEntryPrice`。
+价格来自 `ge` 使用的最新聚合成交，缺失时回退行情价格。未实现盈亏不是 overview 响应中的独立金额字段。
+MIRAO 复用现有同一资产 ID 的 Binance USDT 合约成交行情，用相同方向公式计算：
+
+- 多头：（最新成交价 − 群体平均开仓价）× 群体数量。
+- 空头：（群体平均开仓价 − 最新成交价）× 群体数量。
+
+分别计算交易员、巨鲸两个群体；交易员包含巨鲸，不把两者相加。
+结果标记为「浮盈亏（计算，USDT）」/ `pnl.basis=latest_trade`，不冒充币安账户结算或标记价格口径。
+不额外调用币安数据接口，不调用 Gemini。报价与持仓快照来自各自的采集时刻，页面和消息分别展示两者时间；按异步快照持仓计算的金额不保证与币安此刻页面逐分逐毫一致。
+
+- 行情必须来自相同 Binance 合约资产 ID，不能借用同名 Spot、Hyperliquid、Lighter 或股票价格。
+- 最新成交时间超过 120 秒、持仓成功读取时间超过 900 秒、明显未来时间或上游回退错误时不显示当前金额，并说明原因。
+- 缺失/非法数量或均价显示「未提供」；已知仓位数量为 0 或计算结果恰为 0 时正常显示 0。
+- 不使用价格涨跌比例、杠杆倍数或盈利人数来替代真实的数量与成本字段。
+- 页面接收现有行情推送时只更新金额和价格时间，不重新请求聪明钱接口、不重建整个页面。
+- Telegram 原有群体变化通知附带多空巨鲸开仓均价、计算浮盈亏及参考成交价；人数/数量门槛和冷却仍决定是否推送。
+- 新采样的估值和前后差额保存在现有状态 JSON 中；旧状态没有估值时，首次新采样只记录当前金额，后续有效采样才有差额。
+- 两次成功观察必须同市场、同价格口径、向前且间隔不超过 30 分钟才比较。共用缓存的重复读取不覆盖上次采样比较。
+- 差额包含行情价格、持仓数量/均价与群体成员变化的共同影响，不能解释为这段时间已实现盈利、开平仓收益或资金流入。
+- 不含手续费和资金费，也不反推已实现盈亏。它们仍未从本条公共汇总数据链路核实到。
+
+新增 API `pnl` 是 MIRAO 的派生字段；原始汇总缓存不被估值修改。
+`GET /api/subscriptions` 的个人 `monitoring.pnl_comparison` 返回最近两次监控快照的差额与时间，保持账户隔离。
+本次沿用现有 `smart_money_states.snapshot` JSON，不添加数据库列、不覆盖旧通知、不改变订阅开关。
+
+以下为合成数据示例（不是实时市场行情）：
+
+```text
+🐋 KORUUSDT 聪明钱群体变化
+多头巨鲸：65 → 68（+3 人）
+多头巨鲸持仓数量：100 → 110（+10.00%）
+多头巨鲸开仓均价：$14｜浮盈亏：-$110.00
+空头巨鲸开仓均价：$19｜浮盈亏：+$900.00
+较上次采样：多头 +$90.00｜空头 -$150.00
+参考成交价：$13（10/18 08:10:00 北京时间）
+观察：10/18 08:00 → 10/18 08:10 北京时间
+浮盈亏为快照计算值，含价格/样本变化，不含费用；非已实现收益、不是个人成交。源时间含义待核实。
+```
+
 ### 部署群体变化订阅
 
 将 `REVIEWED_COMMIT_SHA` 替换为本次提供的完整提交号，在 MIRAO VPS 运行：
@@ -110,7 +153,9 @@ Spot、其他平台、停用资产与不存在的资产不能调用；前端不�
 已有数据刷新失败时保留旧快照和原抓取时间，同时显示错误；不会把缓存命中伪装成新的源更新。
 访问币安无需登录 Cookie、API Key、私钥或交易权限，不引入付费服务、Gemini 调用或新数据库表；MIRAO 页面仍要求登录。
 
-## MIRAO VPS 更新
+## 初期只读快照部署（历史记录）
+
+当前版本请使用上方「部署群体变化订阅」流程，它同时包含快照、订阅和浮盈亏功能。以下保留为最初快照版的部署记录。
 
 代码推送后，在 **MIRAO VPS `/opt/korea-market-radar`** 运行，不是在语屿或音频生成服务器。
 把下方 `REVIEWED_COMMIT_SHA` 替换为本次给出的完整提交号。
@@ -154,7 +199,7 @@ tail -n 10 /opt/korea-market-radar/.local-tmp/smart-money-probe.log
 
 ## 验证
 
-在 `app/` 运行 `python -m pytest tests/test_binance_smart_money.py tests/test_smart_money_subscriptions.py tests/test_subscriptions.py tests/test_mobile_api.py -q`，
+在 `app/` 运行 `python -m pytest tests/test_binance_smart_money.py tests/test_smart_money_pnl.py tests/test_smart_money_subscriptions.py tests/test_subscriptions.py tests/test_mobile_api.py -q`，
 仓库根运行 `node --test app/tests/smart-money.test.mjs app/tests/service-worker.test.mjs app/tests/mobile-core.test.mjs`。
 真实 Chrome 的 390/1280px 验证使用 `python app/tests/browser_smart_money.py`，需 Playwright/Chrome。
 测试为隔离数据库和合成快照，不调用币安、Telegram、Gemini 或线上服务。

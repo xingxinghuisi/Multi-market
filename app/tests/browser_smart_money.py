@@ -1,5 +1,6 @@
 """Real browser/API with synthetic snapshots and an isolated database. Never calls Binance."""
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import socket
 import subprocess
@@ -17,7 +18,7 @@ import api
 import mobile_api
 from binance_smart_money import parse_overview, SmartMoneyUnavailable
 from database import Base
-from models import Asset
+from models import Asset, MarketQuote
 
 
 def main():
@@ -28,13 +29,17 @@ def main():
     with sessions() as db:
         db.add(Asset(symbol='KORUUSDT', name='Synthetic browser fixture', asset_type='crypto',
                      venue='BINANCE', segment='FUTURES', currency='USDT', provider='BINANCE_FUTURES'))
+        db.flush()
+        db.add(MarketQuote(asset_id=1, price=16, event_time=datetime.now(timezone.utc)))
         db.commit()
 
     def get_db():
         with lock, sessions() as db:
             yield db
 
-    state = {'calls': 0, 'fail': False}
+    state = {'calls': 0, 'fail': False, 'quote': {'asset_id': 1, 'symbol': 'KORUUSDT',
+             'venue': 'BINANCE', 'segment': 'FUTURES', 'currency': 'USDT', 'asset_type': 'crypto',
+             'price': 16, 'event_time': datetime.now(timezone.utc).isoformat()}}
     def snapshot(symbol):
         state['calls'] += 1
         if state['fail']:
@@ -45,6 +50,8 @@ def main():
             'totalPositions': 1000000, 'totalTraders': 20, 'longShortRatio': .5,
             'longTraders': 10, 'shortTraders': 10, 'longWhales': 3, 'shortWhales': 4,
             'longWhalesAvgEntryPrice': 14, 'shortWhalesAvgEntryPrice': 19,
+            'longTradersQty': 100, 'shortTradersQty': 200, 'longWhalesQty': 75, 'shortWhalesQty': 150,
+            'longTradersAvgEntryPrice': 15, 'shortTradersAvgEntryPrice': 18,
             'longProfitWhales': 0,
         }}, symbol)
 
@@ -60,12 +67,23 @@ def main():
         state['fail'] = True
         return {'synthetic_fixture': True}
 
+    @api.app.post('/__fixture__/smart-money-price')
+    async def update_quote(price: float = 16, stale: bool = False):
+        stamp = datetime.now(timezone.utc)-timedelta(seconds=180 if stale else 0)
+        with lock, sessions() as db:
+            quote = db.query(MarketQuote).filter(MarketQuote.asset_id == 1).one()
+            quote.price, quote.event_time = price, stamp
+            db.commit()
+        state['quote'] = {**state['quote'], 'price': price, 'event_time': stamp.isoformat()}
+        await api.manager.broadcast_json(state['quote'])
+        return {'synthetic_fixture': True}
+
     api.app.dependency_overrides[api.get_db] = get_db
     api.app.state.auth_session_factory = sessions
     api.app.state.auth_insecure_local_cookie = True
     api._binance_read_json = no_external
     mobile_api.smart_money_client.get = snapshot
-    api.load_realtime_market_quotes = lambda: []
+    api.load_realtime_market_quotes = lambda: [state['quote']]
     listener = socket.socket()
     listener.bind(('127.0.0.1', 0))
     port = listener.getsockname()[1]

@@ -1,9 +1,9 @@
-import {escapeHTML as e, number as n, percent, timestamp, safeURL, kind, marketMatches, candleSeries, alertPayload, supportsSubscriptions, apiErrorDetail} from "./mobile-core.js?v=2026.10.17.1";
-import {whalePage,matchingWhaleMarkets,whaleMarketLabel} from "./whales.js?v=2026.10.17.1";
-import {createAppUpdater} from "./app-update.js?v=2026.10.17.1";
-import {signalsPage,technicalPayload,syncTechnicalForm} from "./signals.js?v=2026.10.17.1";
-const APP_VERSION = "2026.10.17.1";
-import {smartMoneyPanel,smartMoneyForm,smartMoneyPayload} from "./smart-money.js?v=2026.10.17.1";
+import {escapeHTML as e, number as n, percent, timestamp, safeURL, kind, marketMatches, candleSeries, alertPayload, supportsSubscriptions, apiErrorDetail} from "./mobile-core.js?v=2026.10.18.1";
+import {whalePage,matchingWhaleMarkets,whaleMarketLabel} from "./whales.js?v=2026.10.18.1";
+import {createAppUpdater} from "./app-update.js?v=2026.10.18.1";
+import {signalsPage,technicalPayload,syncTechnicalForm} from "./signals.js?v=2026.10.18.1";
+const APP_VERSION = "2026.10.18.1";
+import {smartMoneyPanel,smartMoneyForm,smartMoneyPayload,paintSmartMoney} from "./smart-money.js?v=2026.10.18.1";
 
 const $ = selector => document.querySelector(selector);
 const content = $("#content");
@@ -49,6 +49,7 @@ const timeText = value => timestamp(value)?.toLocaleString("zh-CN",{month:"2-dig
 const changeClass = value => value == null ? "muted" : Number(value) >= 0 ? "up" : "down";
 const assetId = asset => asset.asset_id ?? asset.id;
 const quoteFor = id => state.quotes.find(q => q.asset_id === Number(id));
+const smartMonitoring = id => state.subs.find(s=>s.asset.id===id&&s.alert_type==="smart_money")?.monitoring;
 const followed = id => state.watchlist.some(a => a.asset_id === Number(id));
 const visibleAssets = () => state.assets.filter(a => !state.hiddenAssets.includes(a.id));
 const current = () => {const [page, id] = location.hash.slice(1).split("/"); return {page:page || "home", id:Number(id)};};
@@ -147,6 +148,9 @@ function paintQuotes() {
     detailPrice.textContent=n(q?.price,8);
     const change=content.querySelector("[data-detail-change]");
     if(change){change.className=changeClass(q?.change_pct);change.textContent=`${percent(q?.change_pct)}　${q?.change_amount!=null?n(q.change_amount,8):""}`;}
+    const id=Number(detailPrice.dataset.detailPrice),detail=state.detail.get(id);
+    const asset=state.assets.find(a=>a.id===id)||detail?.asset;
+    if(asset)paintSmartMoney(content,asset,detail,q||detail?.quote,smartMonitoring(id));
   }
 }
 function newsRows(rows,limit=Infinity) {
@@ -281,7 +285,7 @@ function detail(id) {
   const q=quoteFor(id)||d?.quote, type=kind(asset), stamp=timestamp(q?.event_time),old=stamp&&Date.now()-stamp.getTime()>15*60*1000;
   const animateChart = Boolean(d?.history?.length && !d.chartShown && !reducedMotion.matches);
   if (d?.history?.length) d.chartShown = true;
-  return back("#watchlist","返回关注列表")+`<div class="page-heading"><div class="detail-title"><span class="asset-avatar ${asset.asset_type==="crypto"?"crypto":""}">${e(asset.symbol.slice(0,2))}</span><div><h1>${e(asset.symbol)}</h1><small>${e(asset.name)} · ${e(asset.venue)} · ${type}</small></div></div><button data-action="follow" data-id="${id}" aria-pressed="${followed(id)}">${followed(id)?"★ 已关注":"☆ 关注"}</button></div><div class="grid-two"><section><div class="card"><span class="tag">${type==="合约"?"Crypto · 合约":type==="Spot"?"Crypto · Spot":"股票行情"}</span><div class="quote-large"><span data-detail-price="${id}">${n(q?.price,8)}</span> <small>${e(asset.currency)}</small></div><span data-detail-change class="${changeClass(q?.change_pct)}">${percent(q?.change_pct)}　${q?.change_amount!=null?n(q.change_amount,8):""}</span><p class="quote-caption">${q?`报价时间 ${timeText(q.event_time)}${old?" · 历史快照 / 可能已收市":""}`:"尚无报价，等待行情服务采集。"}</p>${d?.quoteError?`<div class="notice error">${e(d.quoteError)}</div>`:""}<div class="section-title"><h3>历史走势</h3><span class="tag">最近 30 个交易日</span></div>${d?.historyError?`<div class="notice error">${e(d.historyError)} <button data-action="detail-retry" data-id="${id}">重试</button></div>`:d?.history?chart(d.history, animateChart):empty("正在加载历史行情…")}</div><div class="actions">${followed(id)?linkButton(`#create-alert/${id}`,`${icon("bell")} 创建价格提醒`,true):'<span class="muted">关注后可创建价格提醒</span>'}</div></section><section><div class="section-title"><h2>${type==="合约"?"合约行情":type==="Spot"?"现货行情":"交易数据"}</h2></div><div class="card">${kv([["开盘",n(q?.open,8)],["最高",n(q?.high,8)],["最低",n(q?.low,8)],["成交量",n(q?.volume)],["成交额",n(q?.quote_volume)],["涨跌基准价",n(q?.reference_price,8)]])}<p class="quote-caption">基准：${e(q?.reference_type||"未提供")} · ${e(q?.reference_timezone||"时区未提供")}</p>${type==="股票"?kv([["交易时段",q?.market_session||"未提供"],["常规时段",n(q?.regular_price,8)],["盘前",n(q?.pre_price,8)],["盘后",n(q?.after_price,8)],["隔夜",n(q?.overnight_price,8)]]):""}</div>${type==="合约"?futuresMetrics(asset,d)+longshortPanel(asset,d)+smartMoneyPanel(asset,d):""}<div class="section-title"><h2>相关新闻</h2><a href="#news">全部 ↗</a></div><div class="card list-card">${d?.newsError?`<div class="notice error">${e(d.newsError)}</div>`:d?.news?newsRows(d.news,5):empty("正在加载新闻…")}</div></section></div>`;
+  return back("#watchlist","返回关注列表")+`<div class="page-heading"><div class="detail-title"><span class="asset-avatar ${asset.asset_type==="crypto"?"crypto":""}">${e(asset.symbol.slice(0,2))}</span><div><h1>${e(asset.symbol)}</h1><small>${e(asset.name)} · ${e(asset.venue)} · ${type}</small></div></div><button data-action="follow" data-id="${id}" aria-pressed="${followed(id)}">${followed(id)?"★ 已关注":"☆ 关注"}</button></div><div class="grid-two"><section><div class="card"><span class="tag">${type==="合约"?"Crypto · 合约":type==="Spot"?"Crypto · Spot":"股票行情"}</span><div class="quote-large"><span data-detail-price="${id}">${n(q?.price,8)}</span> <small>${e(asset.currency)}</small></div><span data-detail-change class="${changeClass(q?.change_pct)}">${percent(q?.change_pct)}　${q?.change_amount!=null?n(q.change_amount,8):""}</span><p class="quote-caption">${q?`报价时间 ${timeText(q.event_time)}${old?" · 历史快照 / 可能已收市":""}`:"尚无报价，等待行情服务采集。"}</p>${d?.quoteError?`<div class="notice error">${e(d.quoteError)}</div>`:""}<div class="section-title"><h3>历史走势</h3><span class="tag">最近 30 个交易日</span></div>${d?.historyError?`<div class="notice error">${e(d.historyError)} <button data-action="detail-retry" data-id="${id}">重试</button></div>`:d?.history?chart(d.history, animateChart):empty("正在加载历史行情…")}</div><div class="actions">${followed(id)?linkButton(`#create-alert/${id}`,`${icon("bell")} 创建价格提醒`,true):'<span class="muted">关注后可创建价格提醒</span>'}</div></section><section><div class="section-title"><h2>${type==="合约"?"合约行情":type==="Spot"?"现货行情":"交易数据"}</h2></div><div class="card">${kv([["开盘",n(q?.open,8)],["最高",n(q?.high,8)],["最低",n(q?.low,8)],["成交量",n(q?.volume)],["成交额",n(q?.quote_volume)],["涨跌基准价",n(q?.reference_price,8)]])}<p class="quote-caption">基准：${e(q?.reference_type||"未提供")} · ${e(q?.reference_timezone||"时区未提供")}</p>${type==="股票"?kv([["交易时段",q?.market_session||"未提供"],["常规时段",n(q?.regular_price,8)],["盘前",n(q?.pre_price,8)],["盘后",n(q?.after_price,8)],["隔夜",n(q?.overnight_price,8)]]):""}</div>${type==="合约"?futuresMetrics(asset,d)+longshortPanel(asset,d)+smartMoneyPanel(asset,d,q,smartMonitoring(id)):""}<div class="section-title"><h2>相关新闻</h2><a href="#news">全部 ↗</a></div><div class="card list-card">${d?.newsError?`<div class="notice error">${e(d.newsError)}</div>`:d?.news?newsRows(d.news,5):empty("正在加载新闻…")}</div></section></div>`;
 }
 async function loadDetail(id) {
   if(!Number.isInteger(id)||id<=0)return;
