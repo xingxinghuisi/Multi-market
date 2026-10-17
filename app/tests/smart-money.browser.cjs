@@ -8,7 +8,7 @@ const path=require('node:path');
   const output=path.resolve(__dirname,'../../test-results/smart-money');fs.mkdirSync(output,{recursive:true});
   try {
     for(const width of [390,1280]) {
-      const context=await browser.newContext({viewport:{width,height:900},serviceWorkers:'block',reducedMotion:'reduce'});
+      const context=await browser.newContext({viewport:{width,height:900},serviceWorkers:'block',reducedMotion:'reduce',colorScheme:width===1280?'dark':'light'});
       const page=await context.newPage(), errors=[];
       page.on('pageerror',error=>errors.push(error.message));
       await page.goto(base+'/#register');
@@ -32,11 +32,33 @@ const path=require('node:path');
       await card.getByRole('alert').waitFor();
       assert.match(await card.innerText(),/当前服务器暂时无法访问/);
       assert.match(await card.innerText(),/总持仓名义价值/);
+      await card.scrollIntoViewIfNeeded();await page.screenshot({path:path.join(output,'snapshot-'+width+'.png')});
+      await page.getByRole('button',{name:'设置群体变化提醒',exact:true}).click();
+      const form=page.locator('[data-smart-money-form]');await form.waitFor();
+      assert.equal(await form.getByLabel('开启群体变化提醒',{exact:true}).isChecked(),false);
+      const initial=(await(await page.request.get(base+'/api/subscriptions')).json());
+      assert.equal(initial.length,1);assert.equal(initial[0].alert_type,'smart_money');assert.equal(initial[0].enabled,false);
+      await form.getByLabel('开启群体变化提醒',{exact:true}).check();
+      await form.getByLabel('监控巨鲸人数变化',{exact:true}).uncheck();
+      await form.getByLabel('监控巨鲸持仓数量变化',{exact:true}).uncheck();
+      await form.getByRole('button',{name:'保存聪明钱订阅',exact:true}).click();
+      await form.getByText('至少选择巨鲸人数或持仓数量中的一项。',{exact:true}).waitFor();
+      await form.getByLabel('监控巨鲸人数变化',{exact:true}).check();
+      await form.getByLabel('人数变化门槛（人）',{exact:true}).fill('3');
+      await form.getByLabel('提醒间隔（秒）',{exact:true}).fill('900');
+      const savedResponse=page.waitForResponse(response=>response.url().endsWith('/api/subscriptions')&&response.request().method()==='PUT');
+      await form.getByRole('button',{name:'保存聪明钱订阅',exact:true}).click();
+      assert.equal((await savedResponse).status(),200);
+      await page.getByText('聪明钱订阅已保存；首次采样仅建立对照。',{exact:true}).waitFor();
+      const saved=(await(await page.request.get(base+'/api/subscriptions')).json())[0];
+      assert.equal(saved.enabled,true);assert.equal(saved.config.min_whale_count_change,3);
+      assert.equal(saved.config.watch_whale_quantity,false);assert.equal(saved.config.cooldown_seconds,900);
+      assert.match(await form.innerText(),/等待首次采样/);
       assert.deepEqual(errors,[]);
       assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
-      await card.scrollIntoViewIfNeeded();await page.screenshot({path:path.join(output,'snapshot-'+width+'.png')});
+      await form.scrollIntoViewIfNeeded();await page.screenshot({path:path.join(output,'subscription-'+width+'.png')});
       await context.close();
-      console.log('PASS '+width+'px: authenticated opt-in snapshot, source-time warning, missing/zero fields and failed refresh preservation');
+      console.log('PASS '+width+'px: opt-in snapshot, disabled-by-default subscription, metric validation, independent saved thresholds and responsive theme');
     }
   } finally {await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from database import Base
 from models import AlertSubscription, Asset, Notification, SubscriptionDelivery, User, WatchlistItem
-from schemas import WhaleConfig
+from schemas import WhaleConfig, SmartMoneyConfig
 from telegram_service import CHAT_ID, send_telegram_message
 
 # One API process is used in Compose. Serialize cooldown checks and event claims.
@@ -26,6 +26,8 @@ def supports_subscription(asset):
 
 
 def subscription_config(subscription):
+    if subscription.alert_type == "smart_money":
+        return SmartMoneyConfig.model_validate(subscription.config or {}).model_dump()
     if subscription.alert_type == "technical_signal":
         from technical_indicators import TechnicalConfig
         return TechnicalConfig.model_validate(subscription.config or {}).model_dump()
@@ -54,12 +56,19 @@ def initialize_subscription_tables(engine):
         db.commit()
 
 
-def deliver_subscription_event(db, subscription_id, payload):
+def deliver_subscription_event(db, subscription_id, payload, *, verified_smart_money=False):
     # Commit the pending record before contacting Telegram so a retried HTTP request cannot resend it.
     with _delivery_lock:
+        if verified_smart_money:
+            db.expire_all()
         sub = db.get(AlertSubscription, subscription_id)
         if sub is None or not sub.enabled or not supports_subscription(db.get(Asset, sub.asset_id)):
             return {"status": "inactive"}
+        if sub.alert_type == "smart_money":
+            if not verified_smart_money:
+                raise HTTPException(status_code=422, detail="聪明钱事件必须由服务端快照比较生成")
+            if not db.get(Asset, sub.asset_id).enabled:
+                return {"status": "inactive"}
         user = db.get(User, sub.user_id)
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
@@ -69,7 +78,7 @@ def deliver_subscription_event(db, subscription_id, payload):
         notification = db.get(Notification, prior.notification_id) if prior else None
         if notification is not None and notification.status != "failed":
             return {"status": notification.status, "duplicate": True, "notification_id": notification.id}
-        if sub.alert_type in {"whale_print", "technical_signal"}:
+        if sub.alert_type in {"whale_print", "technical_signal", "smart_money"}:
             try:
                 config = subscription_config(sub)
             except ValueError:

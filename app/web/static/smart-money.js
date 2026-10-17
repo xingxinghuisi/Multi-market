@@ -1,4 +1,4 @@
-import {escapeHTML as e, number as n, supportsSubscriptions} from "./mobile-core.js?v=2026.10.14.1";
+import {escapeHTML as e, number as n, supportsSubscriptions, timestamp} from "./mobile-core.js?v=2026.10.17.1";
 
 const money=value=>value==null?"未提供":`$${n(value,8)}`;
 const count=value=>value==null?"未提供":n(value,0);
@@ -27,6 +27,34 @@ export function smartMoneyPanel(asset,detail={}) {
       <div class="smart-money-sides">${group(data.sides?.long||{},"多头")}${group(data.sides?.short||{},"空头")}</div>
       <p class="quote-caption">数量为合约基础单位，不是保证金。盈利人数不等于盈亏金额；此处不提供个人地址、杠杆或逐笔开平仓。</p>`:
       '<p>查看多空人数、巨鲸人数、持仓数量与平均开仓价。没有数据时不推断市场没有巨鲸。</p>'}
-    <div class="actions">${button}<a href="https://www.binance.com/zh-CN/smart-money/signal/${e(asset.symbol)}" target="_blank" rel="noopener noreferrer">币安原页面 ↗</a></div>
+    <div class="actions">${button}<button type="button" data-action="smart-money-subscribe" data-id="${asset.id}">设置群体变化提醒</button><a href="https://www.binance.com/zh-CN/smart-money/signal/${e(asset.symbol)}" target="_blank" rel="noopener noreferrer">币安原页面 ↗</a></div>
   </div>`;
+}
+
+export function smartMoneyForm(asset,subscription) {
+  const config={watch_whale_count:true,watch_whale_quantity:true,min_whale_count_change:5,min_whale_quantity_change_pct:5,cooldown_seconds:3600,...subscription?.config};
+  const monitoring=subscription?.monitoring;
+  const labels={waiting:"等待首次采样",baseline:"已建立对照快照",gap_reset:"采样中断后已重新建立对照",below_threshold:"本次变化未达门槛",cooldown:"本次处于提醒间隔内",sent:"本次已推送",in_app:"本次已记录站内通知",failed:"本次投递失败",pending:"投递结果待确认",paused:"已暂停",source_error:"数据源暂不可用，保留上次快照",invalid_observation:"未取得可用于比较的新快照",inactive:"已暂停",invalid_config:"配置无效，请重新保存"};
+  const date=timestamp(monitoring?.checked_at),late=date&&Date.now()-date.getTime()>1800000;
+  const status=monitoring?(late&&subscription.enabled?"采样较久未更新，请检查服务":labels[monitoring.status]||"等待下次采样"):"默认关闭，保存后生效";
+  return `<section class="smart-money-settings"><h3>币安聪明钱群体变化</h3><p class="quote-caption">比较多空巨鲸群体的相邻快照；不是地址监控，也不是逐笔成交。</p>
+    <form data-smart-money-form data-asset="${asset.id}">
+      <label class="checkbox"><input type="checkbox" name="enabled"${subscription?.enabled?" checked":""}>开启群体变化提醒</label>
+      <label class="checkbox"><input type="checkbox" name="watch_whale_count"${config.watch_whale_count?" checked":""}>监控巨鲸人数变化</label>
+      <label>人数变化门槛（人）<input name="min_whale_count_change" type="number" min="1" max="1000000" step="1" inputmode="numeric" value="${e(String(config.min_whale_count_change))}" required></label>
+      <label class="checkbox"><input type="checkbox" name="watch_whale_quantity"${config.watch_whale_quantity?" checked":""}>监控巨鲸持仓数量变化</label>
+      <label>数量相对变化门槛（%）<input name="min_whale_quantity_change_pct" type="number" min="0.000001" max="10000" step="any" inputmode="decimal" value="${e(String(config.min_whale_quantity_change_pct))}" required></label>
+      <label>提醒间隔（秒）<input name="cooldown_seconds" type="number" min="600" max="86400" step="1" inputmode="numeric" value="${e(String(config.cooldown_seconds))}" required></label>
+      <p class="quote-caption">所选指标任一方向达到门槛即触发。数量是合约基础单位；原数量为 0 时不计算百分比。共享采样最快约 10 分钟一次，多币种会顺序读取；这不是币安承诺的更新频率。首次开启、修改配置或中断超过 30 分钟后只建立对照，不推送；低于门槛或提醒间隔内的变化不累计补发。</p>
+      <p class="quote-caption" role="status">${e(status)}${date?`<br>最近检查：${e(date.toLocaleString("zh-CN"))}`:""}${monitoring?.observed_at?`<br>最近成功读取：${e(stamp(monitoring.observed_at))}`:""}</p>
+      <p class="form-error down" role="alert"></p><button type="submit">保存聪明钱订阅</button>
+    </form></section>`;
+}
+
+export function smartMoneyPayload(form) {
+  const values=Object.fromEntries(new FormData(form));
+  const config={watch_whale_count:values.watch_whale_count==="on",watch_whale_quantity:values.watch_whale_quantity==="on",
+    min_whale_count_change:Number(values.min_whale_count_change),min_whale_quantity_change_pct:Number(values.min_whale_quantity_change_pct),cooldown_seconds:Number(values.cooldown_seconds)};
+  if(!config.watch_whale_count&&!config.watch_whale_quantity)throw Error("至少选择巨鲸人数或持仓数量中的一项。");
+  return {asset_id:Number(form.dataset.asset),alert_type:"smart_money",enabled:values.enabled==="on",config};
 }

@@ -98,6 +98,7 @@ SubscriptionType = Literal[
     "longshort_digest",
     "whale_print",
     "technical_signal",
+    "smart_money",
 ]
 
 
@@ -113,12 +114,16 @@ class SubscriptionUpsert(BaseModel):
 
     @model_validator(mode="after")
     def validate_config(self):
+        if self.alert_type == "smart_money" and "enabled" not in self.model_fields_set:
+            self.enabled = False
         if self.config is not None:
             if self.alert_type == "whale_print":
                 self.config = WhaleConfig.model_validate(self.config).model_dump()
             elif self.alert_type == "technical_signal":
                 from technical_indicators import TechnicalConfig
                 self.config = TechnicalConfig.model_validate(self.config).model_dump()
+            elif self.alert_type == "smart_money":
+                self.config = SmartMoneyConfig.model_validate(self.config).model_dump()
             elif self.config:
                 raise ValueError("1H 多空播报不支持自定义配置")
         return self
@@ -128,6 +133,21 @@ class WhaleConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     whale_min_usd: float = Field(default=50000, gt=0, le=1e12)
     cooldown_seconds: int = Field(default=300, ge=0, le=86400)
+
+
+class SmartMoneyConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    watch_whale_count: bool = True
+    watch_whale_quantity: bool = True
+    min_whale_count_change: int = Field(default=5, ge=1, le=1000000)
+    min_whale_quantity_change_pct: float = Field(default=5, gt=0, le=10000)
+    cooldown_seconds: int = Field(default=3600, ge=600, le=86400)
+
+    @model_validator(mode="after")
+    def require_metric(self):
+        if not self.watch_whale_count and not self.watch_whale_quantity:
+            raise ValueError("至少选择巨鲸人数或巨鲸持仓数量中的一项")
+        return self
 
 
 class SubscriptionEvent(BaseModel):

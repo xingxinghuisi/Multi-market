@@ -178,6 +178,8 @@ from whale_models import initialize_whale_tables
 from whale_position_api import install_whale_routes
 from signal_models import initialize_signal_tables
 from signal_api import install_signal_routes
+from smart_money_models import SmartMoneyState, initialize_smart_money_tables
+from smart_money_service import install_smart_money_routes, monitoring_status, smart_money_lock
 from subscription_service import initialize_subscription_tables, supports_subscription, subscription_config
 
 
@@ -191,6 +193,7 @@ async def start_market_broadcaster():
     initialize_subscription_tables(database_engine)
     initialize_whale_tables(database_engine)
     initialize_signal_tables(database_engine)
+    initialize_smart_money_tables(database_engine)
 
     app.state.market_broadcast_task = (
         asyncio.create_task(
@@ -4534,13 +4537,14 @@ def delete_alert_rule(
 def serialize_subscription(
     subscription,
     asset,
+    db=None,
 ):
 
     try:
         config = subscription_config(subscription)
         config_valid = True
     except ValueError:
-        config = {"whale_min_usd": 50000, "cooldown_seconds": 300}
+        config = {} if subscription.alert_type == "smart_money" else {"whale_min_usd": 50000, "cooldown_seconds": 300}
         config_valid = False
 
     return {
@@ -4561,6 +4565,8 @@ def serialize_subscription(
         "config": config,
         "config_valid": config_valid,
         "created_at": subscription.created_at,
+        **({"monitoring": monitoring_status(db, subscription)}
+           if subscription.alert_type == "smart_money" and db is not None else {}),
     }
 
 
@@ -4626,6 +4632,7 @@ def get_subscriptions(
         serialize_subscription(
             subscription,
             asset,
+            db,
         )
         for (
             subscription,
@@ -4643,7 +4650,13 @@ def upsert_subscription(
     payload: SubscriptionUpsert,
     db: Session = Depends(get_db),
 ):
+    if payload.alert_type == "smart_money":
+        with smart_money_lock:
+            return _upsert_subscription(payload, db)
+    return _upsert_subscription(payload, db)
 
+
+def _upsert_subscription(payload, db):
     user = get_default_user(db)
 
     asset = get_asset_or_404(
@@ -4653,14 +4666,22 @@ def upsert_subscription(
 
     if not supports_subscription(asset):
         raise HTTPException(status_code=400, detail="推送订阅目前仅支持 Binance USDT 合约")
+    if payload.alert_type == "smart_money":
+        from binance_smart_money import validate_symbol
+        try:
+            validate_symbol(asset.symbol)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="该资产不是可查询的 Binance USDT 合约代码") from None
+        if not asset.enabled:
+            raise HTTPException(status_code=400, detail="请先启用该合约资产再配置聪明钱订阅")
 
-    if payload.alert_type == "technical_signal":
+    if payload.alert_type in {"technical_signal", "smart_money"}:
         count = len(db.scalars(select(AlertSubscription.id).where(
             AlertSubscription.user_id == user.id,
-            AlertSubscription.alert_type == "technical_signal",
+            AlertSubscription.alert_type == payload.alert_type,
             AlertSubscription.asset_id != asset.id)).all())
         if count >= 10:
-            raise HTTPException(status_code=400, detail="每个账户最多配置 10 个技术信号订阅")
+            raise HTTPException(status_code=400, detail="每个账户同类信号最多配置 10 个订阅")
 
     subscription = db.scalar(
         select(
@@ -4689,6 +4710,17 @@ def upsert_subscription(
 
     else:
 
+        if payload.alert_type == "smart_money":
+            from schemas import SmartMoneyConfig
+            try:
+                old_config = subscription_config(subscription)
+            except ValueError:
+                old_config = None
+            new_config = SmartMoneyConfig.model_validate(payload.config or {}).model_dump() if payload.config is not None else old_config
+            if subscription.enabled != payload.enabled or old_config != new_config:
+                state = db.get(SmartMoneyState, subscription.id)
+                if state is not None:
+                    db.delete(state)
         subscription.enabled = payload.enabled
 
         if payload.config is not None:
@@ -4700,6 +4732,7 @@ def upsert_subscription(
     return serialize_subscription(
         subscription,
         asset,
+        db,
     )
 
 
@@ -4723,8 +4756,9 @@ def delete_subscription(
         subscription_id,
     )
 
-    db.delete(subscription)
-    db.commit()
+    with smart_money_lock:
+        db.delete(subscription)
+        db.commit()
 
     return {
         "deleted": True,
@@ -4735,4 +4769,5 @@ def delete_subscription(
 install_mobile_routes(app, get_db, get_default_user, lambda url: _binance_read_json(url))
 install_whale_routes(app, get_db, get_default_user)
 install_signal_routes(app, get_db, get_default_user)
+install_smart_money_routes(app, get_db)
 install_auth(app, get_db)

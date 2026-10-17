@@ -254,14 +254,14 @@ def install_mobile_routes(app, get_db, get_default_user, read_binance_json):
                  "enabled": asset.enabled} for asset in rows]
 
     @app.get("/api/internal/subscriptions")
-    def internal_subscriptions(alert_type: str = Query(..., pattern="^(longshort_digest|whale_print)$"), db=Depends(get_db)):
+    def internal_subscriptions(alert_type: str = Query(..., pattern="^(longshort_digest|whale_print|smart_money)$"), db=Depends(get_db)):
         """Worker 用：返回指定提醒类型下所有启用的推送订阅。"""
         rows = db.execute(
             select(AlertSubscription, Asset, User)
             .join(Asset, AlertSubscription.asset_id == Asset.id)
             .join(User, AlertSubscription.user_id == User.id)
             .where(AlertSubscription.alert_type == alert_type,
-                   AlertSubscription.enabled.is_(True))
+                   AlertSubscription.enabled.is_(True), Asset.enabled.is_(True))
             .order_by(AlertSubscription.id)
         ).all()
         result = []

@@ -1,4 +1,4 @@
-import {escapeHTML as e,number as n,supportsSubscriptions,timestamp} from "./mobile-core.js?v=2026.10.14.1";
+import {escapeHTML as e,number as n,supportsSubscriptions,timestamp} from "./mobile-core.js?v=2026.10.17.1";
 
 const names={rsi:"RSI 14",macd:"MACD 12/26/9",ma:"MA / EMA 金叉与死叉",kdj:"KDJ 9/3/3",volume:"成交额异动",fibonacci:"斐波那契回撤",divergence:"RSI 顶 / 底背离"};
 const defaults={timeframe:"1h",indicators:["rsi","macd","ma","kdj","volume"],rsi_low:30,rsi_high:70,ma_type:"EMA",ma_fast:9,ma_slow:21,volume_multiple:2,fib_low:null,fib_high:null,fib_trend:"up",fib_tolerance_pct:0.3,cooldown_seconds:3600,ai_enabled:true};

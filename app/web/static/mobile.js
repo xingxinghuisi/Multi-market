@@ -1,9 +1,9 @@
-import {escapeHTML as e, number as n, percent, timestamp, safeURL, kind, marketMatches, candleSeries, alertPayload, supportsSubscriptions, apiErrorDetail} from "./mobile-core.js?v=2026.10.14.1";
-import {whalePage,matchingWhaleMarkets,whaleMarketLabel} from "./whales.js?v=2026.10.14.1";
-import {createAppUpdater} from "./app-update.js?v=2026.10.14.1";
-import {signalsPage,technicalPayload,syncTechnicalForm} from "./signals.js?v=2026.10.14.1";
-const APP_VERSION = "2026.10.14.1";
-import {smartMoneyPanel} from "./smart-money.js?v=2026.10.14.1";
+import {escapeHTML as e, number as n, percent, timestamp, safeURL, kind, marketMatches, candleSeries, alertPayload, supportsSubscriptions, apiErrorDetail} from "./mobile-core.js?v=2026.10.17.1";
+import {whalePage,matchingWhaleMarkets,whaleMarketLabel} from "./whales.js?v=2026.10.17.1";
+import {createAppUpdater} from "./app-update.js?v=2026.10.17.1";
+import {signalsPage,technicalPayload,syncTechnicalForm} from "./signals.js?v=2026.10.17.1";
+const APP_VERSION = "2026.10.17.1";
+import {smartMoneyPanel,smartMoneyForm,smartMoneyPayload} from "./smart-money.js?v=2026.10.17.1";
 
 const $ = selector => document.querySelector(selector);
 const content = $("#content");
@@ -180,7 +180,7 @@ function alerts() {
   const signalsEntry=`<a class="menu-row card" href="#signals"><span>📊 技术信号与 Gemini 解读<small>指标触发提醒 · 每月 8.5 美元用量提醒</small></span><span>→</span></a>`;
   return heading("价格提醒","STAY ONE STEP AHEAD",linkButton("#create-alert","＋ 创建提醒",true))+seg+signalsEntry+errorBox("alerts")+`<div class="card">${state.alerts.length?state.alerts.map(rule=>`<article class="rule"><div class="rule-head"><div><h3><a href="#asset/${rule.asset.id}">${e(rule.asset.symbol)}</a> <span class="tag">${kind(rule.asset)}</span></h3><p>${e(({price:"价格",change_pct:"涨跌幅",price_change:"价格变化"})[rule.metric]||rule.metric)}${e(operatorNames[rule.operator]||rule.operator)} <strong>${n(rule.value,8)} ${rule.metric==="change_pct"?"%":e(rule.asset.currency)}</strong></p><small>冷却 ${rule.cooldown_seconds} 秒${rule.operator==="step"?` · 初始锚点 ${n(rule.step_anchor,8)}`:""}</small></div><span class="tag">${rule.enabled?"监控中":"已暂停"}</span></div><div class="actions"><button data-action="toggle-alert" data-id="${rule.id}">${rule.enabled?"暂停":"启用"}</button><button class="danger" data-action="delete-alert" data-id="${rule.id}">删除</button></div></article>`).join(""):empty("还没有价格提醒","选择已关注资产，设置你的第一个触发条件。",linkButton("#create-alert","创建提醒"))}</div><div class="notice">提醒由现有行情服务触发，Telegram 由服务端配置发送。当前未接入手机系统推送。</div>`;
 }
-const subTypeNames={longshort_digest:"1H 多空播报",whale_print:"巨鲸大单",whale_position:"链上巨鲸",technical_signal:"技术信号",ai_budget:"AI 费用提醒"};
+const subTypeNames={longshort_digest:"1H 多空播报",whale_print:"巨鲸大单",whale_position:"链上巨鲸",technical_signal:"技术信号",ai_budget:"AI 费用提醒",smart_money:"币安聪明钱"};
 function subGroups() {
   const map=new Map();
   for(const s of state.subs) {
@@ -204,12 +204,12 @@ function subCard(g) {
   <div class="sub-row"><div class="lb">${subTypeNames.whale_print}<small>Binance 聚合成交达到阈值时提醒</small></div><label class="switch"><input aria-label="${e(asset.symbol)} 巨鲸大单" type="checkbox" data-sub-toggle="whale_print" data-asset="${asset.id}"${whale?.enabled?" checked":""}><span class="tr"></span></label></div>
   <div class="sub-row"><label class="lb" for="whale-threshold-${asset.id}">大额成交阈值（USDT）</label><span class="thr"><input id="whale-threshold-${asset.id}" type="number" min="0.01" max="1000000000000" step="any" inputmode="decimal" value="${e(String(threshold))}" data-sub-threshold="${asset.id}"${whale?.enabled?"":" disabled"}></span></div>
   <div class="sub-row"><label class="lb" for="whale-cooldown-${asset.id}">提醒间隔（秒）<small>每个币种独立；0 表示不设间隔</small></label><span class="thr"><input id="whale-cooldown-${asset.id}" type="number" min="0" max="86400" step="1" inputmode="numeric" value="${e(String(cooldown))}" data-sub-cooldown="${asset.id}"${whale?.enabled?"":" disabled"}></span></div>
-  ${[whale,digest].some(s=>s?.config_valid===false)?'<p class="notice error">旧订阅配置无效，请重新保存阈值和提醒间隔。</p>':""}<a class="inline-link" href="#asset/${asset.id}">查看行情与多空数据 →</a></div></details>`;
+  ${[whale,digest,byType.smart_money].some(s=>s?.config_valid===false)?'<p class="notice error">旧订阅配置无效，请重新保存阈值和提醒间隔。</p>':""}${supportsSubscriptions(asset)?smartMoneyForm(asset,byType.smart_money):""}<a class="inline-link" href="#asset/${asset.id}">查看行情与多空数据 →</a></div></details>`;
 }
 function subscriptionsPage(seg) {
   const groups=subGroups();
   const onCount=groups.filter(g=>Object.values(g.byType).some(s=>s.enabled)).length;
-  return `<a class="menu-row card" href="#signals"><span>📊 技术信号与 Gemini 解读<small>RSI · MACD · MA/EMA · KDJ · 月度用量提醒</small></span><span>→</span></a>`+heading("推送订阅","STAY ONE STEP AHEAD",`<span class="tag">${onCount} / ${groups.length} 已订阅</span>`)+seg+errorBox("subs")+(!state.profile?.telegram_configured?'<div class="notice">尚未绑定 Telegram，提醒会保存在站内通知中心。<a class="inline-link" href="#settings">绑定 Telegram →</a></div>':"")+(groups.length?`<div class="sub-grid">${groups.map(subCard).join("")}</div><button class="sub-add" data-action="sub-add-open">＋ 添加币种</button>`:empty("还没有推送订阅","为合约币种开启 1H 多空播报或巨鲸大单提醒。")+`<button class="sub-add" data-action="sub-add-open">＋ 添加币种</button>`)+`<p class="quote-caption">修改即时保存；巨鲸监听通常在 15 秒内更新，投递时会再次检查开关与阈值。1H 播报在每小时第 2 分钟读取完整周期数据。巨鲸大单表示聚合成交，无法识别真实钱包。价格步进类提醒请前往「价格提醒」页。</p>`+subSheet();
+  return `<a class="menu-row card" href="#signals"><span>📊 技术信号与 Gemini 解读<small>RSI · MACD · MA/EMA · KDJ · 月度用量提醒</small></span><span>→</span></a>`+heading("推送订阅","STAY ONE STEP AHEAD",`<span class="tag">${onCount} / ${groups.length} 已订阅</span>`)+seg+errorBox("subs")+(!state.profile?.telegram_configured?'<div class="notice">尚未绑定 Telegram，提醒会保存在站内通知中心。<a class="inline-link" href="#settings">绑定 Telegram →</a></div>':"")+(groups.length?`<div class="sub-grid">${groups.map(subCard).join("")}</div><button class="sub-add" data-action="sub-add-open">＋ 添加币种</button>`:empty("还没有推送订阅","为合约币种开启 1H 多空播报或巨鲸大单提醒。")+`<button class="sub-add" data-action="sub-add-open">＋ 添加币种</button>`)+`<p class="quote-caption">多空播报和大额成交设置即时保存；聪明钱配置请点击保存。巨鲸监听通常在 15 秒内更新，投递时会再次检查开关与阈值。1H 播报在每小时第 2 分钟读取完整周期数据。巨鲸大单表示聚合成交，无法识别真实钱包。价格步进类提醒请前往「价格提醒」页。</p>`+subSheet();
 }
 function poolRows(pool) {
   return pool.length?pool.map(a=>`<div class="prow"><div class="inf"><b>${e(a.symbol)}</b><small>${e(a.name)} · 合约</small></div><button class="plus" data-action="sub-add" data-id="${a.id}" aria-label="添加 ${e(a.symbol)}">＋</button></div>`).join(""):`<div class="empty"><strong>没有匹配的币种</strong><p>可从资产目录先添加该合约。</p></div>`;
@@ -225,7 +225,7 @@ function createAlert(id) {
 function notifications() {
   const rows=state.notifications.filter(row=>state.notificationFilter==="all"||row.category===state.notificationFilter);
   const categories=[...new Set(state.notifications.map(row=>row.category))];
-  return heading("通知中心","NOTIFICATIONS")+`<div class="filters"><button data-notification-filter="all" class="${state.notificationFilter==="all"?"active":""}">全部</button>${categories.map(category=>`<button data-notification-filter="${e(category)}" class="${state.notificationFilter===category?"active":""}">${e(({price:"价格提醒",news:"新闻提醒",price_alert:"价格提醒",news_alert:"新闻提醒",longshort_digest:"1H 多空播报",whale_print:"巨鲸大单",whale_position:"链上巨鲸",technical_signal:"技术信号",ai_budget:"AI 费用提醒"})[category]||category)}</button>`).join("")}</div>`+errorBox("notifications")+`<div class="card">${rows.length?rows.map(row=>`<article class="news-item"><div class="news-meta"><span class="tag">${e(row.channel)}</span><span>${timeText(row.created_at)}</span><span>${e(({sent:"已发送",failed:"发送失败",pending:"待发送",in_app:"站内记录",cancelled:"已取消"})[row.status]||row.status)}</span></div><h3>${e(row.title)}</h3><p class="notification-text">${e(row.message)}</p>${row.asset_id?`<a class="inline-link" href="#asset/${row.asset_id}">查看资产 →</a>`:""}</article>`).join(""):empty("暂无通知记录","价格、新闻、多空播报和巨鲸提醒触发后会显示在这里。")}</div><p class="quote-caption">显示最近 100 条通知。发送状态来自服务端，不代表设备已读。</p>`;
+  return heading("通知中心","NOTIFICATIONS")+`<div class="filters"><button data-notification-filter="all" class="${state.notificationFilter==="all"?"active":""}">全部</button>${categories.map(category=>`<button data-notification-filter="${e(category)}" class="${state.notificationFilter===category?"active":""}">${e(({price:"价格提醒",news:"新闻提醒",price_alert:"价格提醒",news_alert:"新闻提醒",longshort_digest:"1H 多空播报",whale_print:"巨鲸大单",whale_position:"链上巨鲸",technical_signal:"技术信号",ai_budget:"AI 费用提醒",smart_money:"币安聪明钱"})[category]||category)}</button>`).join("")}</div>`+errorBox("notifications")+`<div class="card">${rows.length?rows.map(row=>`<article class="news-item"><div class="news-meta"><span class="tag">${e(row.channel)}</span><span>${timeText(row.created_at)}</span><span>${e(({sent:"已发送",failed:"发送失败",pending:"待发送",in_app:"站内记录",cancelled:"已取消"})[row.status]||row.status)}</span></div><h3>${e(row.title)}</h3><p class="notification-text">${e(row.message)}</p>${row.asset_id?`<a class="inline-link" href="#asset/${row.asset_id}">查看资产 →</a>`:""}</article>`).join(""):empty("暂无通知记录","价格、新闻、多空播报和巨鲸提醒触发后会显示在这里。")}</div><p class="quote-caption">显示最近 100 条通知。发送状态来自服务端，不代表设备已读。</p>`;
 }
 function news() {
   const rows=state.news.filter(row=>{
@@ -479,6 +479,15 @@ content.addEventListener("click",async event=>{
   }
   if(action==="install"&&installPrompt){await installPrompt.prompt();installPrompt=null;button.hidden=true;}
   if(action==="sub-add-close"){state.subSheet=false;state.subSearch="";render();return;}
+  if(action==="smart-money-subscribe"){
+    const assetId=Number(id);
+    await mutate(button,async()=>{
+      if(!state.subs.some(s=>s.asset.id===assetId&&s.alert_type==="smart_money"))
+        await request("/api/subscriptions",{method:"PUT",body:{asset_id:assetId,alert_type:"smart_money",enabled:false,config:{}}});
+      state.subOpen.add(assetId);state.alertTab="subs";store.set("alertTab","subs");location.hash="alerts";
+      toast("设置门槛后，勾选开启并保存即可。");
+    },["subs"]);return;
+  }
   if(action==="sub-add-open"){state.subSheet=true;state.subSearch="";render();const input=$("#sub-search");input?.focus();return;}
   if(action==="sub-add"){
     const assetId=Number(id);
@@ -573,6 +582,14 @@ content.addEventListener("invalid",event=>{
 content.addEventListener("submit",async event=>{
   event.preventDefault();const form=event.target, values=Object.fromEntries(new FormData(form));
   const button=form.querySelector('[type="submit"]');if(button.disabled)return;
+  if(form.matches("[data-smart-money-form]")){
+    button.disabled=true;const error=form.querySelector(".form-error");error.textContent="";pendingWrites++;
+    try{
+      await request("/api/subscriptions",{method:"PUT",body:smartMoneyPayload(form)});
+      state.subOpen.add(Number(form.dataset.asset));await load(["subs"]);render();toast("聪明钱订阅已保存；首次采样仅建立对照。");
+    }catch(failure){if(form.isConnected)error.textContent=failure.message;else toast(failure.message);}
+    finally{button.disabled=false;pendingWrites--;}return;
+  }
   if(form.classList.contains("whale-subscription-form")){
     await mutate(button,async()=>{await request("/api/whales/subscriptions",{method:"PUT",body:{coin:values.coin,enabled:values.enabled==="on",min_position_usd:Number(values.min_position_usd),cooldown_seconds:Number(values.cooldown_seconds),min_change_usd:Number(values.min_change_usd),min_change_pct:Number(values.min_change_pct),aggregation_seconds:Number(values.aggregation_seconds),priority_events:values.priority_events==="on"}});toast("巨鲸订阅已保存；服务会自动发现地址。");},["whales"]);return;
   }
